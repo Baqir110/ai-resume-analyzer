@@ -186,8 +186,9 @@ st.markdown(
 .security-note {
     padding: 12px;
     border-radius: 8px;
-    background: #EFF6FF;
-    border: 1px solid #BFDBFE;
+    background: #1E293B;
+    border: 1px solid #334155;
+    color: #F8FAFC;
 }
 
 </style>
@@ -266,8 +267,10 @@ def api_request(
 
     with st.status(
         spinner_text,
-        expanded=False,
+        expanded=True,
     ) as status:
+
+        st.write("📄 Sending payload and document to backend...")
 
         try:
             response = requests.post(
@@ -340,8 +343,9 @@ def api_request(
 
         if response.status_code == 200:
             status.update(
-                label="Done",
+                label="✅ Analysis complete!",
                 state="complete",
+                expanded=False,
             )
         else:
             status.update(
@@ -823,9 +827,16 @@ with st.container(border=True):
 # ==============================================================================
 
 with st.expander(
-    "Backend processing log",
+    "🛠️ Backend processing log",
     expanded=False,
 ):
+    col_log1, col_log2 = st.columns([8, 2])
+
+    with col_log2:
+        if st.button("Clear Logs", key="clear_logs_btn", use_container_width=True):
+            if LLMService:
+                LLMService.clear_logs()
+                st.rerun()
 
     st.caption(
         "Recent LLM requests recorded by the backend. "

@@ -16,7 +16,6 @@ def latex_escape_url(url: str) -> str:
     """Safely prepare a URL for use as the first argument of \href."""
     url = url.strip()
 
-    # Remove Markdown link wrappers: [https://example.com](https://example.com)
     match = re.fullmatch(r"\[([^\]]+)\]\(([^)]+)\)", url)
     if match:
         url = match.group(2).strip()
@@ -31,7 +30,7 @@ def latex_escape_url(url: str) -> str:
 
 
 def normalize_latex_links(text: str) -> str:
-    """Convert malformed Markdown links and constructs into safe LaTeX \hrlink commands."""
+    """Convert malformed Markdown links into safe LaTeX \hrlink commands."""
     malformed_hrlink = re.compile(
         r"""
         \\hrlink
@@ -146,7 +145,7 @@ def clean_body_for_latex(body_text: str) -> str:
 GERMAN_CORPORATE_LATEX_TEMPLATE = r"""
 \documentclass[10pt,a4paper]{article}
 
-\usepackage[top=1.0cm,bottom=1.0cm,left=1.2cm,right=1.2cm]{geometry}
+\usepackage[top=0.8cm,bottom=0.8cm,left=1.2cm,right=1.2cm]{geometry}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage{helvet}
@@ -178,17 +177,17 @@ GERMAN_CORPORATE_LATEX_TEMPLATE = r"""
     {}{0em}{}
     [\vspace{-3pt}\color{subgray}\rule{\textwidth}{0.6pt}]
 
-\titlespacing{\section}{0pt}{6pt}{3pt}
+\titlespacing{\section}{0pt}{4pt}{2pt}
 
 \setlist[itemize]{
     leftmargin=1.1em,
-    itemsep=1pt,
-    topsep=1pt,
+    itemsep=0.5pt,
+    topsep=0.5pt,
     parsep=0pt
 }
 
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{1pt}
+\setlength{\parskip}{0.5pt}
 
 \newcommand{\jobheader}[3]{%
     \noindent\textbf{\color{primary}#1}, #2
@@ -200,7 +199,7 @@ GERMAN_CORPORATE_LATEX_TEMPLATE = r"""
 \newcommand{\projheader}[3]{%
     \noindent
     \textbf{\color{primary}#1}
-    \textit{\color{subgray}(#2)}
+    \ifx\relax#2\relax\else\textit{\color{subgray}(#2)}\fi
     \ifx\relax#3\relax
     \else
         \hfill\hrlink{#3}{GitHub}
@@ -214,10 +213,10 @@ GERMAN_CORPORATE_LATEX_TEMPLATE = r"""
 
 \begin{center}
 
-    {\Huge\bfseries\color{primary} Muhammad Baqir}\\[3pt]
+    {\Huge\bfseries\color{primary} Muhammad Baqir}\\[2pt]
 
     {\Large\bfseries\color{primary}
-    IT Support Engineer \textbar{} DevOps \& MLOps}\\[4pt]
+    IT Support Engineer \textbar{} DevOps \& MLOps}\\[3pt]
 
     {\small\color{subgray}
         Bamberg, Deutschland (Umzugsbereit)
@@ -235,7 +234,7 @@ GERMAN_CORPORATE_LATEX_TEMPLATE = r"""
 
 RESUME_BODY_PLACEHOLDER
 
-\vspace{6pt}
+\vspace{4pt}
 
 \noindent
 \small\color{subgray}Bamberg, \today
@@ -251,7 +250,7 @@ RESUME_BODY_PLACEHOLDER
 GERMAN_ATS_LATEX_TEMPLATE = r"""
 \documentclass[10pt,a4paper]{article}
 
-\usepackage[top=1.2cm,bottom=1.2cm,left=1.5cm,right=1.5cm]{geometry}
+\usepackage[top=0.8cm,bottom=0.8cm,left=1.2cm,right=1.2cm]{geometry}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage{helvet}
@@ -282,17 +281,17 @@ GERMAN_ATS_LATEX_TEMPLATE = r"""
     {}{0em}{}
     [\vspace{-2pt}\rule{\textwidth}{0.8pt}]
 
-\titlespacing{\section}{0pt}{8pt}{4pt}
+\titlespacing{\section}{0pt}{4pt}{2pt}
 
 \setlist[itemize]{
-    leftmargin=1.2em,
-    itemsep=2pt,
-    topsep=2pt,
+    leftmargin=1.1em,
+    itemsep=0.5pt,
+    topsep=0.5pt,
     parsep=0pt
 }
 
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{2pt}
+\setlength{\parskip}{0.5pt}
 
 \newcommand{\jobheader}[3]{%
     \noindent
@@ -304,7 +303,7 @@ GERMAN_ATS_LATEX_TEMPLATE = r"""
 
 \newcommand{\projheader}[3]{%
     \noindent
-    \textbf{#1} (#2)
+    \textbf{#1} \ifx\relax#2\relax\else(#2)\fi
     \ifx\relax#3\relax
     \else
         \hfill\hrlink{#3}{[GitHub]}
@@ -318,9 +317,9 @@ GERMAN_ATS_LATEX_TEMPLATE = r"""
 
 \begin{center}
 
-    {\LARGE\bfseries Muhammad Baqir}\\[3pt]
+    {\LARGE\bfseries Muhammad Baqir}\\[2pt]
 
-    {\large IT Support Engineer \textbar{} DevOps \textbar{} MLOps}\\[4pt]
+    {\large IT Support Engineer \textbar{} DevOps \textbar{} MLOps}\\[3pt]
 
     {\small
         Bamberg, Deutschland
@@ -338,7 +337,7 @@ GERMAN_ATS_LATEX_TEMPLATE = r"""
 
 RESUME_BODY_PLACEHOLDER
 
-\vspace{6pt}
+\vspace{4pt}
 
 \noindent
 {\small Bamberg, \today}
@@ -352,9 +351,9 @@ RESUME_BODY_PLACEHOLDER
 # ============================================================
 
 GERMAN_CLASSIC_LATEX_TEMPLATE = r"""
-\documentclass[11pt,a4paper]{article}
+\documentclass[10pt,a4paper]{article}
 
-\usepackage[top=1.5cm,bottom=1.5cm,left=1.5cm,right=1.5cm]{geometry}
+\usepackage[top=0.9cm,bottom=0.9cm,left=1.3cm,right=1.3cm]{geometry}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage{mathptmx}
@@ -381,17 +380,17 @@ GERMAN_CLASSIC_LATEX_TEMPLATE = r"""
     {}{0em}{}
     [\vspace{-2pt}\hrule height 0.5pt]
 
-\titlespacing{\section}{0pt}{10pt}{4pt}
+\titlespacing{\section}{0pt}{5pt}{2pt}
 
 \setlist[itemize]{
-    leftmargin=1.3em,
-    itemsep=2pt,
-    topsep=2pt,
+    leftmargin=1.1em,
+    itemsep=0.5pt,
+    topsep=0.5pt,
     parsep=0pt
 }
 
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{2pt}
+\setlength{\parskip}{0.5pt}
 
 \newcommand{\jobheader}[3]{%
     \noindent
@@ -401,7 +400,7 @@ GERMAN_CLASSIC_LATEX_TEMPLATE = r"""
 
 \newcommand{\projheader}[3]{%
     \noindent
-    \textbf{#1} \textit{(#2)}
+    \textbf{#1} \ifx\relax#2\relax\else\textit{(#2)}\fi
     \ifx\relax#3\relax
     \else
         \hfill\hrlink{#3}{Link}
@@ -415,9 +414,9 @@ GERMAN_CLASSIC_LATEX_TEMPLATE = r"""
 
 \begin{center}
 
-    {\huge\bfseries Muhammad Baqir}\\[4pt]
+    {\huge\bfseries Muhammad Baqir}\\[3pt]
 
-    {\large IT Support Engineer \textbar{} DevOps \textbar{} MLOps}\\[6pt]
+    {\large IT Support Engineer \textbar{} DevOps \textbar{} MLOps}\\[4pt]
 
     {\small
         Bamberg, Deutschland (Umzugsbereit)
@@ -432,13 +431,13 @@ GERMAN_CLASSIC_LATEX_TEMPLATE = r"""
 
 \end{center}
 
-\vspace{4pt}
+\vspace{2pt}
 \hrule height 1pt
-\vspace{6pt}
+\vspace{4pt}
 
 RESUME_BODY_PLACEHOLDER
 
-\vspace{10pt}
+\vspace{6pt}
 
 \noindent
 {\small Bamberg, den \today}
@@ -454,7 +453,7 @@ RESUME_BODY_PLACEHOLDER
 GERMAN_MODERN_LATEX_TEMPLATE = r"""
 \documentclass[10pt,a4paper]{article}
 
-\usepackage[top=1.0cm,bottom=1.0cm,left=1.2cm,right=1.2cm]{geometry}
+\usepackage[top=0.8cm,bottom=0.8cm,left=1.2cm,right=1.2cm]{geometry}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage{helvet}
@@ -487,17 +486,17 @@ GERMAN_MODERN_LATEX_TEMPLATE = r"""
     {}{0em}{}
     [\vspace{-2pt}\color{primary}\rule{\textwidth}{1.2pt}]
 
-\titlespacing{\section}{0pt}{6pt}{3pt}
+\titlespacing{\section}{0pt}{4pt}{2pt}
 
 \setlist[itemize]{
     leftmargin=1.1em,
-    itemsep=1pt,
-    topsep=1pt,
+    itemsep=0.5pt,
+    topsep=0.5pt,
     parsep=0pt
 }
 
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{1pt}
+\setlength{\parskip}{0.5pt}
 
 \newcommand{\jobheader}[3]{%
     \noindent
@@ -510,7 +509,7 @@ GERMAN_MODERN_LATEX_TEMPLATE = r"""
 \newcommand{\projheader}[3]{%
     \noindent
     \textbf{\color{darkgray}#1}
-    \textit{\color{secondary}(#2)}
+    \ifx\relax#2\relax\else\textit{\color{secondary}(#2)}\fi
     \ifx\relax#3\relax
     \else
         \hfill\hrlink{#3}{GitHub}
@@ -524,10 +523,10 @@ GERMAN_MODERN_LATEX_TEMPLATE = r"""
 
 \begin{center}
 
-    {\Huge\bfseries\color{darkgray} Muhammad Baqir}\\[3pt]
+    {\Huge\bfseries\color{darkgray} Muhammad Baqir}\\[2pt]
 
     {\large\bfseries\color{primary}
-    IT Support Engineer \textbar{} DevOps \textbar{} MLOps}\\[4pt]
+    IT Support Engineer \textbar{} DevOps \textbar{} MLOps}\\[3pt]
 
     {\small\color{secondary}
         Bamberg, Deutschland (Umzugsbereit)
@@ -545,7 +544,7 @@ GERMAN_MODERN_LATEX_TEMPLATE = r"""
 
 RESUME_BODY_PLACEHOLDER
 
-\vspace{5pt}
+\vspace{4pt}
 
 \noindent
 {\small\color{secondary}Bamberg, \today}
@@ -561,7 +560,7 @@ RESUME_BODY_PLACEHOLDER
 INTERNATIONAL_ATS_LATEX_TEMPLATE = r"""
 \documentclass[10pt,a4paper]{article}
 
-\usepackage[top=1.0cm,bottom=1.0cm,left=1.2cm,right=1.2cm]{geometry}
+\usepackage[top=0.8cm,bottom=0.8cm,left=1.2cm,right=1.2cm]{geometry}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage{helvet}
@@ -592,17 +591,17 @@ INTERNATIONAL_ATS_LATEX_TEMPLATE = r"""
     {}{0em}{}
     [\vspace{-3pt}\color{primary}\rule{\textwidth}{0.6pt}]
 
-\titlespacing{\section}{0pt}{5pt}{3pt}
+\titlespacing{\section}{0pt}{4pt}{2pt}
 
 \setlist[itemize]{
     leftmargin=1.1em,
-    itemsep=1pt,
-    topsep=1pt,
+    itemsep=0.5pt,
+    topsep=0.5pt,
     parsep=0pt
 }
 
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{1pt}
+\setlength{\parskip}{0.5pt}
 
 \newcommand{\jobheader}[3]{%
     \noindent
@@ -615,7 +614,7 @@ INTERNATIONAL_ATS_LATEX_TEMPLATE = r"""
 \newcommand{\projheader}[3]{%
     \noindent
     \textbf{\color{primary}#1}
-    \textit{\color{secondary}(#2)}
+    \ifx\relax#2\relax\else\textit{\color{secondary}(#2)}\fi
     \ifx\relax#3\relax
     \else
         \hfill\hrlink{#3}{GitHub}
@@ -629,10 +628,10 @@ INTERNATIONAL_ATS_LATEX_TEMPLATE = r"""
 
 \begin{center}
 
-    {\Huge\bfseries\color{primary} Muhammad Baqir}\\[3pt]
+    {\Huge\bfseries\color{primary} Muhammad Baqir}\\[2pt]
 
     {\large\bfseries\color{primary}
-    IT Support Engineer \textbar{} DevOps \textbar{} MLOps}\\[4pt]
+    IT Support Engineer \textbar{} DevOps \textbar{} MLOps}\\[3pt]
 
     {\small\color{secondary}
         Bamberg, Germany
@@ -680,8 +679,9 @@ def generate_german_latex_content(
     model_name: Optional[str] = None,
     api_key: Optional[str] = None,
     layout_style: str = "german_corporate",
+    primary_color_hex: Optional[str] = None,
+    secondary_color_hex: Optional[str] = None,
 ) -> str:
-
     if layout_style not in CV_TEMPLATES:
         layout_style = "german_corporate"
 
@@ -741,9 +741,9 @@ STRICT STRUCTURAL AND CONTENT RULES:
    - Do NOT change degree titles or company names.
    - You MAY expand existing experience and project bullet points by adding technical context, missing keywords, and relevant details from the job description.
 
-3. NO ARTIFICIAL LENGTH LIMITS:
-   - Do NOT prune or drop accomplishments to force the content onto one page.
-   - Preserve all existing content while adding missing target skills.
+3. PAGE LIMITATION COMPLIANCE:
+   - Ensure the content remains concise and fits comfortably within 1 page.
+   - Combine education entries efficiently if necessary.
 
 4. WORK EXPERIENCE & PROJECTS:
    - Every bullet point inside \begin{{itemize}} MUST start strictly with \item.
@@ -773,12 +773,27 @@ STRICT STRUCTURAL AND CONTENT RULES:
         prompt=prompt,
         provider=provider,
         model_name=model_name,
+        api_key=api_key,
     )
 
     clean_body = clean_llm_response_to_latex(raw_latex)
     clean_body = clean_body_for_latex(clean_body)
 
     template = CV_TEMPLATES[layout_style]
+
+    if primary_color_hex:
+        template = re.sub(
+            r"\\definecolor\{primary\}\{HTML\}\{[A-Fa-f0-9]{6}\}",
+            f"\\\\definecolor{{primary}}{{HTML}}{{{primary_color_hex.strip('#')}}}",
+            template,
+        )
+
+    if secondary_color_hex:
+        template = re.sub(
+            r"\\definecolor\{secondary\}\{HTML\}\{[A-Fa-f0-9]{6}\}",
+            f"\\\\definecolor{{secondary}}{{HTML}}{{{secondary_color_hex.strip('#')}}}",
+            template,
+        )
 
     return template.replace(
         "RESUME_BODY_PLACEHOLDER",
@@ -792,7 +807,6 @@ STRICT STRUCTURAL AND CONTENT RULES:
 
 
 def compile_latex_to_pdf(latex_code: str) -> bytes:
-
     pdflatex = shutil.which("pdflatex")
 
     if not pdflatex:

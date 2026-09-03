@@ -1,4 +1,4 @@
-# suggestions.py
+# app/services/suggestions.py
 from typing import List
 
 
@@ -6,41 +6,68 @@ def generate_recommendations(
     ats_score: float, missing_skills: List[str], matching_skills: List[str]
 ) -> List[str]:
     """
-    Generates actionable optimization advice based on resume analysis.
-    Enforces additive enrichment to reach 100% ATS alignment without altering facts.
+    Generates high-impact, actionable optimization advice based on resume analysis.
+    Enforces additive enrichment to maximize ATS alignment without altering original facts.
     """
     recommendations = []
 
-    # Score-based tier recommendations
+    # ------------------------------------------------------------
+    # 1. Tiered ATS Alignment Advice
+    # ------------------------------------------------------------
     if ats_score < 40.0:
         recommendations.append(
-            "CRITICAL GAP: Low ATS alignment detected. Expand your existing work experience and project entries by adding exact tools, frameworks, and methodologies required by the job posting."
+            "CRITICAL ALIGNMENT GAP: Low match score detected. Expand your existing work history and project entries by integrating exact tools, frameworks, and methodologies required by the job posting."
         )
-    elif ats_score < 70.0:
+    elif ats_score < 60.0:
         recommendations.append(
-            "MODERATE ALIGNMENT: Weave missing technical keywords directly into your existing experience bullet points. Ensure tools are contextualized within project accomplishments."
+            "MODERATE ALIGNMENT GAP: Core technical terms are missing. Weave target job keywords directly into your experience bullet points, ensuring tools are contextualized within project deliverables."
+        )
+    elif ats_score < 75.0:
+        recommendations.append(
+            "GOOD ALIGNMENT: Strong keyword foundation. Strengthen your resume by ensuring missing specialized tools and secondary requirements appear in both your Technical Skills block and job descriptions."
+        )
+    elif ats_score < 90.0:
+        recommendations.append(
+            "HIGH ALIGNMENT: Excellent keyword match! Verify that all target technologies appear naturally inside high-impact accomplishment bullets alongside measurable results."
         )
     else:
         recommendations.append(
-            "STRONG ALIGNMENT: Excellent key term match! Verify that missing niche skills are integrated into both your Technical Skills block and relevant accomplishment descriptions."
+            "OUTSTANDING ALIGNMENT: Near-perfect ATS match! Ensure formatting is clean, single-column, and free of tables or complex graphics to ensure smooth ATS parsing."
         )
 
-    # Missing skill integration
+    # ------------------------------------------------------------
+    # 2. Targeted Keyword Injection Advice
+    # ------------------------------------------------------------
     if missing_skills:
         top_missing = missing_skills[:7]
         skills_str = ", ".join(top_missing)
         recommendations.append(
-            f"KEYWORD INJECTION: Add these missing core technical terms to your Technical Skills section and existing project descriptions: {skills_str}."
-        )
-
-    # Domain depth & tool coverage
-    if len(matching_skills) < 6:
-        recommendations.append(
-            "TOOL DEPTH: Expand technical specificity. Explicitly name version control systems, deployment environments, databases, and monitoring tools mentioned in the job description."
+            f"KEYWORD INJECTION: Explicitly add these missing technical terms to your Technical Skills section and relevant project descriptions: {skills_str}."
         )
     else:
         recommendations.append(
-            "ATS OPTIMIZATION: Ensure all matched technical terms appear naturally within detailed result metrics (e.g., impact, system scale, or optimization outcomes)."
+            "FULL KEYWORD COVERAGE: All primary technical skills extracted from the job posting were successfully detected in your CV."
         )
+
+    # ------------------------------------------------------------
+    # 3. Technical Depth & Achievement Quality Checks
+    # ------------------------------------------------------------
+    num_matched = len(matching_skills)
+
+    if num_matched < 5 and missing_skills:
+        recommendations.append(
+            "TECHNICAL SPECIFICITY: Increase depth by explicitly naming version control systems, deployment environments, databases, CI/CD pipelines, and monitoring tools mentioned in the job posting."
+        )
+    elif num_matched >= 5:
+        recommendations.append(
+            "QUANTIFIABLE IMPACT: Combine matched technical skills with measurable metrics (e.g., system scale, performance optimizations, latency reductions, or ticket resolution efficiency)."
+        )
+
+    # ------------------------------------------------------------
+    # 4. Fact Preservation & ATS Formatting Guidance
+    # ------------------------------------------------------------
+    recommendations.append(
+        "FORMATTING & ACCURACY RULE: Maintain 100% factual integrity. Add missing technical keywords as additive context to existing roles without changing company names, job titles, employment dates, or degree titles."
+    )
 
     return recommendations

@@ -1,12 +1,10 @@
-# optimizer.py
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 from app.services.llm_provider import LLMService
 
 
 def suggest_best_cv_format(
     job_description: str,
 ) -> Dict[str, Any]:
-
     jd_lower = (job_description or "").lower()
 
     is_german = any(
@@ -39,8 +37,7 @@ def suggest_best_cv_format(
             return {
                 "recommended_format": "german_classic_pdf",
                 "label": "German Classic Single-Column PDF",
-                "reason": "German posting for a traditional company. "
-                "A formal single-column structure is recommended.",
+                "reason": "German posting for a traditional organization. A formal single-column structure is recommended.",
                 "ats_safety": "Sehr hoch",
                 "confidence": 0.90,
                 "layout": "german_classic",
@@ -49,8 +46,7 @@ def suggest_best_cv_format(
         return {
             "recommended_format": "german_modern_pdf",
             "label": "German Modern Executive PDF",
-            "reason": "German technology/startup role. "
-            "A modern professional layout is appropriate.",
+            "reason": "German technology or startup role. A modern professional layout is appropriate.",
             "ats_safety": "Hoch",
             "confidence": 0.85,
             "layout": "german_modern",
@@ -59,8 +55,7 @@ def suggest_best_cv_format(
     return {
         "recommended_format": "international_docx",
         "label": "International ATS Standard DOCX",
-        "reason": "International/English posting. "
-        "A simple ATS-compatible DOCX structure is recommended.",
+        "reason": "International or English posting. A clean ATS-compatible structure is recommended.",
         "ats_safety": "Sehr hoch",
         "confidence": 0.90,
         "layout": "international_ats",
@@ -73,26 +68,30 @@ def optimize_resume_bullets(
     missing_skills: List[str],
     provider: str = "gemini",
 ) -> str:
+    prompt = f"""You are an expert ATS Resume Coach.
 
-    prompt = f"""
-You are an expert ATS Resume Coach.
+### FEW-SHOT EXAMPLES OF HIGH-IMPACT REWRITES:
+Before: "Worked on Python projects."
+After: "Developed and deployed Python-based REST APIs using FastAPI and PostgreSQL, improving backend response times by 30%."
 
-Target Job Description:
+Before: "Responsible for setting up server monitoring."
+After: "Configured system-wide infrastructure monitoring using Prometheus and Grafana, reducing system downtime by 20%."
+
+### TARGET JOB DESCRIPTION:
 {job_description}
 
-Critical Missing Skills:
-{", ".join(missing_skills)}
+### CRITICAL MISSING SKILLS TO INTEGRATE:
+{", ".join(missing_skills) if missing_skills else "None provided."}
 
-Current Resume:
+### CURRENT RESUME TEXT:
 {resume_text[:5000]}
 
-Instructions:
-1. Enhance existing resume bullets to target missing keywords naturally.
-2. Never remove existing original accomplishments or change degree names/facts.
-3. Use: Action + Context/Technology + Result/Metric.
-4. Give Before and After versions.
-5. Keep the answer concise.
-6. Return plain Markdown only.
+### STEP-BY-STEP INSTRUCTIONS:
+1. STEP 1 (ANALYSIS): Compare the current resume bullets against the target job requirements.
+2. STEP 2 (ENRICHMENT): Enhance existing bullet points by adding relevant technologies, context, missing skills, and quantifiable metrics (Action + Context/Tool + Result).
+3. STEP 3 (FACT PRESERVATION): Never alter original employment dates, company names, or degree details.
+
+Return plain Markdown displaying the Before and After comparisons.
 """
 
     return LLMService.generate(
@@ -107,30 +106,24 @@ def generate_full_tailored_cv(
     missing_skills: List[str],
     provider: str = "gemini",
 ) -> str:
+    prompt = f"""You are an expert ATS CV Optimization Specialist.
 
-    prompt = f"""
-You are an expert ATS CV Optimization Specialist.
-
-YOUR GOAL:
-Maximize the ATS match score against the target job description by enriching the candidate's existing content.
-
-TARGET JOB DESCRIPTION:
+### TARGET JOB DESCRIPTION:
 {job_description}
 
-MISSING SKILLS TO INTEGRATE:
-{", ".join(missing_skills)}
+### CRITICAL MISSING SKILLS TO INTEGRATE:
+{", ".join(missing_skills) if missing_skills else "None provided."}
 
-ORIGINAL RESUME TEXT:
+### ORIGINAL RESUME TEXT:
 {resume_text}
 
-STRICT CONSTRAINTS & ACCURACY RULES:
-1. PRESERVE ALL ORIGINAL FACTS: Do not delete, shorten, or change existing company names, degree titles, dates, locations, or project titles.
-2. ADDITIVE ENHANCEMENTS ONLY: You MAY expand existing experience entries, education details, and existing projects by naturally adding technical depth, methodology, tools, and missing keywords required by the job.
-3. NO FABRICATED JOBS OR PROJECTS: Do not invent new company entries or brand-new side projects from scratch. Only enrich existing ones.
-4. KEYWORD INTEGRATION: Seamlessly blend missing keywords into the Technical Skills section and into relevant bullet points of existing roles and projects.
-5. DO NOT PRUNE: Preserve all existing accomplishments and bullet points. Do not cut details to save space.
+### STEP-BY-STEP WORKFLOW:
+1. STEP 1 (MAPPING): Map existing candidate experiences and accomplishments to the target job requirements.
+2. STEP 2 (SKILLS ENRICHMENT): Expand the Technical Skills section with missing target keywords.
+3. STEP 3 (ADDITIVE EXPERIENCE ENRICHMENT): Expand existing bullet points in work history and projects with technical context and methodologies mentioned in the job posting.
+4. STEP 4 (FACT PRESERVATION): Retain all original company names, dates, degrees, and project entries completely intact. Do NOT prune or shorten accomplishments.
 
-Return exactly:
+Return strictly Markdown following this structure:
 
 # Candidate Name
 
@@ -145,8 +138,6 @@ Return exactly:
 ## Education
 
 ## Languages & Certifications
-
-Return Markdown only.
 """
 
     return LLMService.generate(
@@ -162,37 +153,25 @@ def generate_cv_html_payload(
     layout_style: str = "german_modern",
     provider: str = "gemini",
 ) -> str:
-
-    prompt = f"""
-You are an expert German CV writer and HTML document designer.
+    prompt = f"""You are an expert German CV document designer.
 
 Target Job:
 {job_description}
 
 Missing Skills:
-{", ".join(missing_skills)}
+{", ".join(missing_skills) if missing_skills else "None"}
 
 Original Resume:
 {resume_text}
 
-Layout:
+Layout Style:
 {layout_style}
 
-Create a professional German CV.
-
-Rules:
-- Never delete or invent core facts.
-- Preserve every project and employment entry.
-- Enrich existing bullets with missing job keywords.
-- Preserve degree titles, dates, and education.
-- Use valid HTML only.
-- No Markdown or code fences.
-
-Return:
-
-<div class="cv-container">
-...
-</div>
+### RULES:
+1. Preserve every project, degree, and employment entry.
+2. Enrich existing bullets naturally with missing job keywords.
+3. Output valid HTML inside <div class="cv-container">...</div>.
+4. Do NOT output code fences or conversational text.
 """
 
     html = LLMService.generate(

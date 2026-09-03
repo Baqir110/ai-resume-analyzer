@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -15,14 +16,14 @@ from dotenv import load_dotenv
 from google import genai
 from groq import Groq
 
+logger = logging.getLogger(__name__)
+
 # ============================================================
 # Environment
 # ============================================================
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
 ENV_PATH = PROJECT_ROOT / ".env"
-
 load_dotenv(ENV_PATH, override=False)
 
 
@@ -31,7 +32,6 @@ load_dotenv(ENV_PATH, override=False)
 # ============================================================
 
 DEFAULT_LOG_PATH = PROJECT_ROOT / "data" / "llm_processing.jsonl"
-
 LOG_PATH = Path(
     os.getenv(
         "LLM_PROCESSING_LOG",
@@ -56,54 +56,30 @@ PROVIDER_ENV_KEYS = {
     "claude": "ANTHROPIC_API_KEY",
 }
 
-
 DEFAULT_MODELS = {
-    "gemini": os.getenv(
-        "GEMINI_MODEL",
-        "gemini-2.5-flash",
-    ),
-    "groq": os.getenv(
-        "GROQ_MODEL",
-        "openai/gpt-oss-120b",
-    ),
-    "openrouter": os.getenv(
-        "OPENROUTER_MODEL",
-        "deepseek/deepseek-chat",
-    ),
-    "deepseek": os.getenv(
-        "DEEPSEEK_MODEL",
-        "deepseek-chat",
-    ),
-    "openai": os.getenv(
-        "OPENAI_MODEL",
-        "gpt-4o-mini",
-    ),
-    "claude": os.getenv(
-        "CLAUDE_MODEL",
-        "claude-3-5-haiku-20241022",
-    ),
-    "ollama": os.getenv(
-        "OLLAMA_MODEL",
-        "llama3",
-    ),
+    "gemini": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+    "groq": os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+    "openrouter": os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat"),
+    "deepseek": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+    "openai": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+    "claude": os.getenv("CLAUDE_MODEL", "claude-3-5-haiku-20241022"),
+    "ollama": os.getenv("OLLAMA_MODEL", "llama3"),
 }
 
 
 # ============================================================
-# Logging & Sanitization
+# Logging & Sanitization Helpers
 # ============================================================
 
 
 def clean_llm_output(text: str) -> str:
-    """
-    Removes Markdown code fences and AI conversational meta-text from any provider's output.
-    """
+    """Removes Markdown code fences and AI conversational meta-text from any provider's output."""
     if not text:
         return ""
 
     text = text.strip()
 
-    # Remove Markdown code fences (e.g., ```latex, ```html, ```markdown)
+    # Remove Markdown code fences
     text = re.sub(
         r"^\s*```(?:latex|tex|html|markdown|json)?\s*", "", text, flags=re.IGNORECASE
     )
@@ -130,7 +106,6 @@ def _clean_base_url(url: str, default: str) -> str:
     if not url:
         return default
     url = url.strip()
-    # Strip markdown link wrappers if present (e.g. [https://...](https://...))
     match = re.search(r"https?://[^\s\)]+", url)
     if match:
         return match.group(0)
@@ -145,23 +120,9 @@ def _utc_now() -> str:
 
 def _write_log(event: dict[str, Any]) -> None:
     try:
-        LOG_PATH.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        with LOG_PATH.open(
-            "a",
-            encoding="utf-8",
-        ) as file:
-            file.write(
-                json.dumps(
-                    event,
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
-
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with LOG_PATH.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(event, ensure_ascii=False) + "\n")
     except Exception:
         pass
 
@@ -192,9 +153,7 @@ def _safe_error(exc: Exception) -> str:
 
 
 class LLMService:
-
     DEFAULT_MODELS = DEFAULT_MODELS
-
     SUPPORTED_PROVIDERS = (
         "gemini",
         "groq",
@@ -206,10 +165,7 @@ class LLMService:
     )
 
     @classmethod
-    def get_default_model(
-        cls,
-        provider: str,
-    ) -> str:
+    def get_default_model(cls, provider: str) -> str:
         provider = (provider or "gemini").strip().lower()
         return cls.DEFAULT_MODELS.get(provider, "")
 
@@ -257,11 +213,7 @@ class LLMService:
         return rows
 
     @classmethod
-    def _get_api_key(
-        cls,
-        provider: str,
-        custom_key: Optional[str] = None,
-    ) -> str:
+    def _get_api_key(cls, provider: str, custom_key: Optional[str] = None) -> str:
         if custom_key and custom_key.strip():
             return custom_key.strip()
 
@@ -286,6 +238,113 @@ class LLMService:
         return workspace
 
     @classmethod
+    def _execute_single_provider(
+        cls,
+        prompt: str,
+        provider: str,
+        model_name: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ) -> str:
+        """Internal execution method for a single provider."""
+        model = model_name or cls.get_default_model(provider)
+
+        system_instruction = (
+            "[SYSTEM INSTRUCTION: DO NOT OUTPUT CONVERSATIONAL INTROS, GREETINGS, "
+            "FOOTERS, OR META-COMMENTARY. DO NOT ASK QUESTIONS. RETURN ONLY THE EXACT "
+            "REQUESTED CODE OR TEXT FORMAT.]\n\n"
+        )
+        full_prompt = system_instruction + prompt
+
+        if provider == "gemini":
+            key = cls._get_api_key("gemini", custom_key=api_key)
+            client = genai.Client(api_key=key)
+            chat = client.chats.create(model=model)
+            response = chat.send_message(full_prompt)
+            return getattr(response, "text", None) or ""
+
+        elif provider == "groq":
+            key = cls._get_api_key("groq", custom_key=api_key)
+            client = Groq(api_key=key)
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": full_prompt}],
+                temperature=0.3,
+            )
+            return response.choices[0].message.content or ""
+
+        elif provider == "openrouter":
+            key = cls._get_api_key("openrouter", custom_key=api_key)
+            raw_url = os.getenv("OPENROUTER_BASE_URL", "")
+            base_url = _clean_base_url(raw_url, "https://openrouter.ai/api/v1")
+            client = openai.OpenAI(api_key=key, base_url=base_url)
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": full_prompt}],
+                temperature=0.3,
+            )
+            return response.choices[0].message.content or ""
+
+        elif provider == "deepseek":
+            key = cls._get_api_key("deepseek", custom_key=api_key)
+            raw_url = os.getenv("DEEPSEEK_BASE_URL", "")
+            base_url = _clean_base_url(raw_url, "https://api.deepseek.com")
+            client = openai.OpenAI(api_key=key, base_url=base_url)
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": full_prompt}],
+                temperature=0.3,
+            )
+            return response.choices[0].message.content or ""
+
+        elif provider == "openai":
+            key = cls._get_api_key("openai", custom_key=api_key)
+            client = openai.OpenAI(api_key=key)
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": full_prompt}],
+                temperature=0.3,
+            )
+            return response.choices[0].message.content or ""
+
+        elif provider == "claude":
+            key = cls._get_api_key("claude", custom_key=api_key)
+            workspace_id = cls._get_claude_workspace_id()
+            client = anthropic.Anthropic(
+                api_key=key,
+                default_headers={"anthropic-workspace-id": workspace_id},
+            )
+            response = client.messages.create(
+                model=model,
+                max_tokens=4096,
+                temperature=0.3,
+                messages=[{"role": "user", "content": full_prompt}],
+            )
+            return "".join(
+                block.text
+                for block in response.content
+                if getattr(block, "type", None) == "text"
+            )
+
+        elif provider == "ollama":
+            raw_url = os.getenv(
+                "OLLAMA_BASE_URL",
+                "http://localhost:11434/api/generate",
+            )
+            url = _clean_base_url(raw_url, "http://localhost:11434/api/generate")
+            response = requests.post(
+                url,
+                json={"model": model, "prompt": full_prompt, "stream": False},
+                timeout=120,
+            )
+            if response.status_code != 200:
+                raise RuntimeError(f"Ollama connection error ({response.status_code})")
+            payload = response.json()
+            return payload.get("response", "") or ""
+
+        else:
+            raise ValueError(f"Unsupported AI provider: {provider}")
+
+    @classmethod
     def generate(
         cls,
         prompt: str,
@@ -294,213 +353,101 @@ class LLMService:
         api_key: Optional[str] = None,
         **kwargs: Any,
     ) -> str:
+        """
+        Executes generation with automatic fallback & retry logic across configured providers.
+        """
+        primary_provider = (provider or "gemini").strip().lower()
 
-        provider = (provider or "gemini").strip().lower()
+        # Build an ordered fallback chain
+        fallback_chain = [
+            primary_provider,
+            "gemini",
+            "groq",
+            "openrouter",
+            "deepseek",
+            "openai",
+            "claude",
+        ]
 
-        if provider not in cls.SUPPORTED_PROVIDERS:
-            raise ValueError(f"Unsupported AI provider: {provider}")
-
-        model = model_name or cls.get_default_model(provider)
-
-        # Enforce strict system-level formatting instructions
-        system_instruction = (
-            "[SYSTEM INSTRUCTION: DO NOT OUTPUT CONVERSATIONAL INTROS, GREETINGS, "
-            "FOOTERS, OR META-COMMENTARY. DO NOT ASK QUESTIONS. RETURN ONLY THE EXACT "
-            "REQUESTED CODE OR TEXT FORMAT.]\n\n"
-        )
-        full_prompt = system_instruction + prompt
+        # Deduplicate preserving order
+        seen = set()
+        providers_to_try = [p for p in fallback_chain if not (p in seen or seen.add(p))]
 
         started = time.perf_counter()
         request_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
 
-        _write_log(
-            {
-                "timestamp": _utc_now(),
-                "request_id": request_id,
-                "event": "request_started",
-                "provider": provider,
-                "model": model,
-                "prompt_chars": len(full_prompt or ""),
-                "status": "started",
-            }
-        )
+        last_error = None
 
-        try:
-            # =================================================
-            # GEMINI
-            # =================================================
-            if provider == "gemini":
-                key = cls._get_api_key("gemini", custom_key=api_key)
-                client = genai.Client(api_key=key)
-                # Recommended Chat API method to avoid automatic function calling warnings
-                chat = client.chats.create(model=model)
-                response = chat.send_message(full_prompt)
-                text = getattr(response, "text", None) or ""
+        for current_provider in providers_to_try:
+            try:
+                # Check if provider has required configuration
+                if current_provider != "ollama":
+                    env_key = PROVIDER_ENV_KEYS.get(current_provider)
+                    if not env_key or not os.getenv(env_key, "").strip():
+                        if current_provider == primary_provider and not api_key:
+                            continue
+                        elif not api_key:
+                            continue
 
-            # =================================================
-            # GROQ
-            # =================================================
-            elif provider == "groq":
-                key = cls._get_api_key("groq", custom_key=api_key)
-                client = Groq(api_key=key)
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": full_prompt}],
-                    temperature=0.3,
-                )
-                text = response.choices[0].message.content or ""
-
-            # =================================================
-            # OPENROUTER
-            # =================================================
-            elif provider == "openrouter":
-                key = cls._get_api_key("openrouter", custom_key=api_key)
-                raw_url = os.getenv("OPENROUTER_BASE_URL", "")
-                base_url = _clean_base_url(raw_url, "(https://openrouter.ai/api/v1)")
-
-                client = openai.OpenAI(
-                    api_key=key,
-                    base_url=base_url,
-                )
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": full_prompt}],
-                    temperature=0.3,
-                )
-                text = response.choices[0].message.content or ""
-
-            # =================================================
-            # DEEPSEEK
-            # =================================================
-            elif provider == "deepseek":
-                key = cls._get_api_key("deepseek", custom_key=api_key)
-                raw_url = os.getenv("DEEPSEEK_BASE_URL", "")
-                base_url = _clean_base_url(
-                    raw_url, "[https://api.deepseek.com](https://api.deepseek.com)"
+                _write_log(
+                    {
+                        "timestamp": _utc_now(),
+                        "request_id": request_id,
+                        "event": "request_started",
+                        "provider": current_provider,
+                        "model": model_name or cls.get_default_model(current_provider),
+                        "prompt_chars": len(prompt or ""),
+                        "status": "started",
+                    }
                 )
 
-                client = openai.OpenAI(
-                    api_key=key,
-                    base_url=base_url,
-                )
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": full_prompt}],
-                    temperature=0.3,
-                )
-                text = response.choices[0].message.content or ""
-
-            # =================================================
-            # OPENAI
-            # =================================================
-            elif provider == "openai":
-                key = cls._get_api_key("openai", custom_key=api_key)
-                client = openai.OpenAI(api_key=key)
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": full_prompt}],
-                    temperature=0.3,
-                )
-                text = response.choices[0].message.content or ""
-
-            # =================================================
-            # CLAUDE
-            # =================================================
-            elif provider == "claude":
-                key = cls._get_api_key("claude", custom_key=api_key)
-                workspace_id = cls._get_claude_workspace_id()
-                client = anthropic.Anthropic(
-                    api_key=key,
-                    default_headers={"anthropic-workspace-id": workspace_id},
-                )
-                response = client.messages.create(
-                    model=model,
-                    max_tokens=4096,
-                    temperature=0.3,
-                    messages=[{"role": "user", "content": full_prompt}],
-                )
-                text = "".join(
-                    block.text
-                    for block in response.content
-                    if getattr(block, "type", None) == "text"
+                raw_text = cls._execute_single_provider(
+                    prompt=prompt,
+                    provider=current_provider,
+                    model_name=(
+                        model_name if current_provider == primary_provider else None
+                    ),
+                    api_key=api_key if current_provider == primary_provider else None,
                 )
 
-            # =================================================
-            # OLLAMA
-            # =================================================
-            elif provider == "ollama":
-                raw_url = os.getenv(
-                    "OLLAMA_BASE_URL",
-                    "http://localhost:11434/api/generate",
+                if not raw_text.strip():
+                    raise RuntimeError("Provider returned an empty response.")
+
+                cleaned_text = clean_llm_output(raw_text)
+                duration_ms = round((time.perf_counter() - started) * 1000, 1)
+
+                _write_log(
+                    {
+                        "timestamp": _utc_now(),
+                        "request_id": request_id,
+                        "event": "request_completed",
+                        "provider": current_provider,
+                        "model": model_name or cls.get_default_model(current_provider),
+                        "duration_ms": duration_ms,
+                        "response_chars": len(cleaned_text),
+                        "status": "success",
+                    }
                 )
-                url = _clean_base_url(raw_url, "http://localhost:11434/api/generate")
 
-                response = requests.post(
-                    url,
-                    json={"model": model, "prompt": full_prompt, "stream": False},
-                    timeout=120,
+                return cleaned_text
+
+            except Exception as exc:
+                last_error = _safe_error(exc)
+                logger.warning(
+                    f"LLM Provider '{current_provider}' failed. Trying next fallback. Error: {last_error}"
+                )
+                _write_log(
+                    {
+                        "timestamp": _utc_now(),
+                        "request_id": request_id,
+                        "event": "provider_failed",
+                        "provider": current_provider,
+                        "status": "error",
+                        "error": last_error,
+                    }
                 )
 
-                if response.status_code != 200:
-                    raise RuntimeError(
-                        f"Ollama connection error ({response.status_code})"
-                    )
-
-                try:
-                    payload = response.json()
-                except ValueError as exc:
-                    raise RuntimeError("Ollama returned invalid JSON.") from exc
-
-                text = payload.get("response", "") or ""
-
-            else:
-                raise ValueError(f"Unsupported AI provider: {provider}")
-
-            if not text.strip():
-                raise RuntimeError("The AI provider returned an empty response.")
-
-            # Clean and sanitize output
-            cleaned_text = clean_llm_output(text)
-
-            duration_ms = round((time.perf_counter() - started) * 1000, 1)
-
-            _write_log(
-                {
-                    "timestamp": _utc_now(),
-                    "request_id": request_id,
-                    "event": "request_completed",
-                    "provider": provider,
-                    "model": model,
-                    "duration_ms": duration_ms,
-                    "prompt_chars": len(full_prompt or ""),
-                    "response_chars": len(cleaned_text),
-                    "status": "success",
-                }
-            )
-
-            return cleaned_text
-
-        except Exception as exc:
-            duration_ms = round((time.perf_counter() - started) * 1000, 1)
-            error_text = _safe_error(exc)
-
-            _write_log(
-                {
-                    "timestamp": _utc_now(),
-                    "request_id": request_id,
-                    "event": "request_failed",
-                    "provider": provider,
-                    "model": model,
-                    "duration_ms": duration_ms,
-                    "prompt_chars": len(full_prompt or ""),
-                    "status": "error",
-                    "error": error_text,
-                }
-            )
-
-            raise RuntimeError(
-                f"AI Provider Error ({provider.upper()}): {error_text}"
-            ) from exc
+        raise RuntimeError(f"All LLM providers failed. Last error: {last_error}")
 
     @classmethod
     def recent_logs(cls, limit: int = 100) -> list[dict[str, Any]]:
