@@ -1,370 +1,1260 @@
 import io
 import os
 import time
+from pathlib import Path
+
 import requests
 import streamlit as st
 from docx import Document
 
-# ==============================================================================
-# CONFIG
-# ==============================================================================
-API_BASE = os.environ.get("RESUME_API_BASE", "http://localhost:8000/api/v1/resume")
-REQUEST_TIMEOUT = 60  # seconds
+try:
+    from app.services.llm_provider import LLMService, LOG_PATH
+except Exception:
+    LLMService = None
+    LOG_PATH = Path(
+        os.getenv(
+            "LLM_PROCESSING_LOG",
+            str(Path.home() / ".resume_hub_llm.log.jsonl"),
+        )
+    )
 
-ENDPOINTS = {
-    "analyze": f"{API_BASE}/analyze",
-    "full_docx": f"{API_BASE}/generate-full",
-    "german_pdf": f"{API_BASE}/generate-german-cv",
-    "german_tex": f"{API_BASE}/generate-tex-cv",
-}
+
+# ==============================================================================
+# CONFIGURATION
+# ==============================================================================
+
+DEFAULT_API_BASE = "http://localhost:8000"
+REQUEST_TIMEOUT = 120
 
 PROVIDER_LABELS = {
-    "gemini": "Google Gemini (Free API Key)",
-    "groq": "Groq Cloud (Super Fast / Free Tier)",
-    "openrouter": "OpenRouter (Free Model Options)",
-    "deepseek": "DeepSeek V3/R1 (Low-Cost / Free)",
-    "ollama": "Ollama (100% Free & Local)",
-    "openai": "OpenAI ChatGPT",
+    "gemini": "Google Gemini",
+    "groq": "Groq",
+    "openrouter": "OpenRouter",
+    "deepseek": "DeepSeek",
+    "ollama": "Ollama",
+    "openai": "OpenAI",
     "claude": "Anthropic Claude",
 }
 
-TEMPLATE_LABELS = {
-    "german_corporate": "🇩🇪 Corporate Slate Navy (Single-Column)",
-    "german_modern": "🇩🇪 Modern Two-Column (Sidebar Layout)",
-    "german_classic": "🇩🇪 Classic Conservative Single-Column",
-    "international_ats": "🌐 International English ATS Standard",
+DEFAULT_MODELS = {
+    "gemini": "gemini-2.5-flash",
+    "groq": "openai/gpt-oss-120b",
+    "openrouter": "deepseek/deepseek-chat",
+    "deepseek": "deepseek-chat",
+    "ollama": "llama3",
+    "openai": "gpt-4o-mini",
+    "claude": "claude-3-5-haiku-20241022",
 }
 
-st.set_page_config(page_title="AI Resume & CV Optimization Hub", page_icon="🎯", layout="wide")
+TEMPLATE_LABELS = {
+    "german_corporate": "Corporate Slate Navy",
+    "german_modern": "Modern Two-Column",
+    "german_classic": "Classic Conservative",
+    "international_ats": "International English ATS",
+}
+
 
 # ==============================================================================
-# LIGHT STYLING (chips, step badges)
+# PAGE CONFIG
 # ==============================================================================
-st.markdown("""
+
+st.set_page_config(
+    page_title="AI Resume & CV Optimization Hub",
+    page_icon="🎯",
+    layout="wide",
+)
+
+
+# ==============================================================================
+# API ENDPOINTS
+# ==============================================================================
+
+
+def endpoints(api_base: str) -> dict:
+    """
+    FastAPI uses:
+
+        /api/v1/resume/analyze
+        /api/v1/resume/generate-full
+        /api/v1/resume/generate-german-cv
+        /api/v1/resume/generate-tex-cv
+    """
+
+    api_base = api_base.rstrip("/")
+
+    prefix = f"{api_base}/api/v1/resume"
+
+    return {
+        "analyze": f"{prefix}/analyze",
+        "full_docx": f"{prefix}/generate-full",
+        "german_pdf": f"{prefix}/generate-german-cv",
+        "german_tex": f"{prefix}/generate-tex-cv",
+    }
+
+
+# ==============================================================================
+# SESSION STATE
+# ==============================================================================
+
+if "api_base" not in st.session_state:
+    st.session_state["api_base"] = DEFAULT_API_BASE
+
+if "provider" not in st.session_state:
+    st.session_state["provider"] = "gemini"
+
+if "last_analysis" not in st.session_state:
+    st.session_state["last_analysis"] = None
+
+if "uploaded_file_data" not in st.session_state:
+    st.session_state["uploaded_file_data"] = None
+
+if "job_desc" not in st.session_state:
+    st.session_state["job_desc"] = ""
+
+
+# ==============================================================================
+# STYLING
+# ==============================================================================
+
+st.markdown(
+    """
 <style>
-.chip {display:inline-block; padding:4px 12px; margin:3px; border-radius:999px; font-size:0.85rem; font-weight:500;}
-.chip-good {background:#DCFCE7; color:#166534;}
-.chip-bad {background:#FEE2E2; color:#991B1B;}
-.step-badge {display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px;
-  border-radius:50%; background:#E5E7EB; color:#374151; font-weight:600; font-size:0.85rem; margin-right:8px;}
-.step-badge.active {background:#2563EB; color:white;}
-.step-badge.done {background:#16A34A; color:white;}
+
+.chip {
+    display: inline-block;
+    padding: 5px 12px;
+    margin: 3px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.chip-good {
+    background: #DCFCE7;
+    color: #166534;
+}
+
+.chip-bad {
+    background: #FEE2E2;
+    color: #991B1B;
+}
+
+.step-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #E5E7EB;
+    color: #374151;
+    font-weight: 600;
+    font-size: 0.85rem;
+    margin-right: 8px;
+}
+
+.step-badge.active {
+    background: #2563EB;
+    color: white;
+}
+
+.step-badge.done {
+    background: #16A34A;
+    color: white;
+}
+
+.metric-big {
+    font-size: 2.4rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.metric-label {
+    color: #6B7280;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.provider-card {
+    padding: 10px 12px;
+    border-radius: 8px;
+    margin-bottom: 6px;
+    border: 1px solid #E5E7EB;
+}
+
+.security-note {
+    padding: 12px;
+    border-radius: 8px;
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+}
+
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 
 # ==============================================================================
 # HELPERS
 # ==============================================================================
+
+
 def chips(items, kind="good"):
     if not items:
         st.caption("None found.")
         return
-    cls = "chip-good" if kind == "good" else "chip-bad"
-    html = "".join(f'<span class="chip {cls}">{i}</span>' for i in items)
+
+    css_class = "chip-good" if kind == "good" else "chip-bad"
+
+    html = "".join(f'<span class="chip {css_class}">{item}</span>' for item in items)
+
     st.markdown(html, unsafe_allow_html=True)
 
 
-def api_request(url: str, data: dict, files: dict, spinner_text: str):
-    """POST with a friendly status widget; auto-retries once on 429/503. Never returns a bare exception state."""
-    with st.status(spinner_text, expanded=False) as status:
+def score_block(label: str, value: int):
+    value = int(value or 0)
+    value = max(0, min(value, 100))
+
+    st.markdown(
+        f'<div class="metric-label">{label}</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        f'<div class="metric-big">{value}%</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.progress(value / 100)
+
+
+def error_detail(response) -> str:
+    if response is None:
+        return "Could not connect to the backend service."
+
+    try:
+        data = response.json()
+
+        if isinstance(data, dict):
+            detail = data.get("detail")
+
+            if detail:
+                return str(detail)
+
+        return response.text
+
+    except Exception:
+        return response.text or f"HTTP {response.status_code}"
+
+
+def api_request(
+    url: str,
+    data: dict,
+    files: dict,
+    spinner_text: str,
+):
+    """
+    Send request to FastAPI.
+
+    IMPORTANT:
+    No API key is ever sent from this frontend.
+
+    API keys are loaded by the backend from .env.
+    """
+
+    with st.status(
+        spinner_text,
+        expanded=False,
+    ) as status:
+
         try:
-            res = requests.post(url, data=data, files=files, timeout=REQUEST_TIMEOUT)
+            response = requests.post(
+                url,
+                data=data,
+                files=files,
+                timeout=REQUEST_TIMEOUT,
+            )
+
         except requests.exceptions.ConnectionError:
-            status.update(label="❌ Couldn't reach the backend (localhost:8000).", state="error")
-            return None
-        except requests.exceptions.Timeout:
-            status.update(label="❌ Request timed out.", state="error")
+            status.update(
+                label="Backend unavailable.",
+                state="error",
+            )
             return None
 
-        if res.status_code in (429, 503):
-            wait_time = 20 if res.status_code == 503 else 50
-            status.update(label=f"⏳ Server busy ({res.status_code}). Retrying in {wait_time}s...", state="running")
+        except requests.exceptions.Timeout:
+            status.update(
+                label="Backend request timed out.",
+                state="error",
+            )
+            return None
+
+        except requests.exceptions.RequestException as exc:
+            status.update(
+                label="Request failed.",
+                state="error",
+            )
+            st.error(str(exc))
+            return None
+
+        # ------------------------------------------------------------------
+        # Retry temporary server errors
+        # ------------------------------------------------------------------
+
+        if response.status_code in (429, 503):
+
+            wait_time = 10 if response.status_code == 429 else 5
+
+            status.update(
+                label=(
+                    f"Server busy ({response.status_code}). "
+                    f"Retrying in {wait_time}s..."
+                ),
+                state="running",
+            )
+
             progress = st.progress(0)
+
             for i in range(wait_time):
                 time.sleep(1)
                 progress.progress((i + 1) / wait_time)
+
             progress.empty()
-            status.update(label="Retrying now...", state="running")
+
             try:
-                res = requests.post(url, data=data, files=files, timeout=REQUEST_TIMEOUT)
-            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-                status.update(label="❌ Retry failed.", state="error")
+                response = requests.post(
+                    url,
+                    data=data,
+                    files=files,
+                    timeout=REQUEST_TIMEOUT,
+                )
+
+            except requests.exceptions.RequestException:
+                status.update(
+                    label="Retry failed.",
+                    state="error",
+                )
                 return None
 
-        if res.status_code == 200:
-            status.update(label="✅ Done", state="complete")
+        if response.status_code == 200:
+            status.update(
+                label="Done",
+                state="complete",
+            )
         else:
-            status.update(label=f"❌ Failed ({res.status_code})", state="error")
-    return res
+            status.update(
+                label=f"Request failed ({response.status_code})",
+                state="error",
+            )
 
-
-def error_detail(res) -> str:
-    if res is None:
-        return "Could not connect to the backend service."
-    try:
-        return str(res.json().get("detail", res.text))
-    except Exception:
-        return res.text or f"HTTP {res.status_code}"
-
-
-def current_upload():
-    return st.session_state.get("uploaded_file_data")
+    return response
 
 
 def build_files_payload():
-    fname, fval, ftype = current_upload()
-    return {"resume_file": (fname, fval, ftype)}
+    uploaded = st.session_state.get("uploaded_file_data")
+
+    if not uploaded:
+        return {}
+
+    filename, file_bytes, mime_type = uploaded
+
+    return {
+        "resume_file": (
+            filename,
+            file_bytes,
+            mime_type,
+        )
+    }
 
 
 def generate_txt_export(result_data: dict) -> bytes:
     lines = [
-        "=" * 50,
-        "AI RESUME & CV OPTIMIZATION REPORT".center(50),
-        "=" * 50,
-        f"ATS Match Score: {result_data.get('ats_match_score')}%",
-        f"Keyword Density Score: {result_data.get('keyword_density_score')}%",
-        "\n[MATCHING SKILLS]",
+        "=" * 60,
+        "AI RESUME & CV OPTIMIZATION REPORT".center(60),
+        "=" * 60,
+        "",
+        f"ATS Match Score: " f"{result_data.get('ats_match_score', 0)}%",
+        f"Keyword Density Score: " f"{result_data.get('keyword_density_score', 0)}%",
+        "",
+        "[MATCHING SKILLS]",
         ", ".join(result_data.get("matching_skills", [])) or "None",
-        "\n[MISSING SKILLS]",
+        "",
+        "[MISSING SKILLS]",
         ", ".join(result_data.get("missing_skills", [])) or "None",
-        "\n" + "=" * 50,
-        "SUGGESTIONS & REWRITES".center(50),
-        "=" * 50 + "\n",
+        "",
+        "=" * 60,
+        "SUGGESTIONS & REWRITES".center(60),
+        "=" * 60,
+        "",
     ]
-    for idx, tip in enumerate(result_data.get("improvement_suggestions", []), 1):
-        lines.append(f"{idx}. {tip}\n")
+
+    for index, suggestion in enumerate(
+        result_data.get("improvement_suggestions", []),
+        1,
+    ):
+        lines.append(f"{index}. {suggestion}")
+        lines.append("")
+
     return "\n".join(lines).encode("utf-8")
 
 
 def generate_docx_export(result_data: dict) -> bytes:
     doc = Document()
-    doc.add_heading("AI Resume Optimization Report", level=0)
 
-    doc.add_heading("Overview Metrics", level=1)
-    p = doc.add_paragraph()
-    p.add_run("ATS Match Score: ").bold = True
-    p.add_run(f"{result_data.get('ats_match_score')}%\n")
-    p.add_run("Keyword Density: ").bold = True
-    p.add_run(f"{result_data.get('keyword_density_score')}%\n")
+    doc.add_heading(
+        "AI Resume Optimization Report",
+        level=0,
+    )
 
-    doc.add_heading("Skill Gap Analysis", level=1)
-    p_skills = doc.add_paragraph()
-    p_skills.add_run("Matching Skills: ").bold = True
-    p_skills.add_run(f"{', '.join(result_data.get('matching_skills', []))}\n")
-    p_skills.add_run("Missing Skills: ").bold = True
-    p_skills.add_run(f"{', '.join(result_data.get('missing_skills', []))}\n")
+    doc.add_heading(
+        "Overview Metrics",
+        level=1,
+    )
 
-    doc.add_heading("Suggestions & Rewritten Bullets", level=1)
-    for tip in result_data.get("improvement_suggestions", []):
-        if tip.startswith("🤖"):
-            doc.add_heading("AI Rewritten Content", level=2)
-            doc.add_paragraph(tip.replace("🤖 ", ""))
+    paragraph = doc.add_paragraph()
+
+    paragraph.add_run("ATS Match Score: ").bold = True
+
+    paragraph.add_run(f"{result_data.get('ats_match_score', 0)}%\n")
+
+    paragraph.add_run("Keyword Density: ").bold = True
+
+    paragraph.add_run(f"{result_data.get('keyword_density_score', 0)}%")
+
+    doc.add_heading(
+        "Skill Gap Analysis",
+        level=1,
+    )
+
+    paragraph = doc.add_paragraph()
+
+    paragraph.add_run("Matching Skills: ").bold = True
+
+    paragraph.add_run(", ".join(result_data.get("matching_skills", [])) or "None")
+
+    paragraph.add_run("\n")
+
+    paragraph.add_run("Missing Skills: ").bold = True
+
+    paragraph.add_run(", ".join(result_data.get("missing_skills", [])) or "None")
+
+    doc.add_heading(
+        "Suggestions & Rewritten Bullets",
+        level=1,
+    )
+
+    for suggestion in result_data.get(
+        "improvement_suggestions",
+        [],
+    ):
+
+        if suggestion.startswith("🤖"):
+
+            doc.add_heading(
+                "AI Rewritten Content",
+                level=2,
+            )
+
+            doc.add_paragraph(suggestion.replace("🤖 ", ""))
+
         else:
-            doc.add_paragraph(tip, style="List Bullet")
+
+            doc.add_paragraph(
+                suggestion,
+                style="List Bullet",
+            )
 
     buffer = io.BytesIO()
+
     doc.save(buffer)
+
     buffer.seek(0)
+
     return buffer.getvalue()
 
 
 def reset_all():
-    for k in ("last_analysis", "uploaded_file_data", "job_desc"):
-        st.session_state.pop(k, None)
+    st.session_state["last_analysis"] = None
+    st.session_state["uploaded_file_data"] = None
+    st.session_state["job_desc"] = ""
 
 
 # ==============================================================================
 # SIDEBAR
 # ==============================================================================
+
 with st.sidebar:
-    st.title("🤖 AI Engine")
-    provider = st.selectbox(
-        "AI Provider",
-        options=list(PROVIDER_LABELS.keys()),
-        format_func=lambda x: PROVIDER_LABELS[x],
+
+    st.title("AI Engine")
+
+    # --------------------------------------------------------------------------
+    # Provider
+    # --------------------------------------------------------------------------
+
+    provider_options = list(PROVIDER_LABELS.keys())
+
+    current_provider = st.session_state.get(
+        "provider",
+        "gemini",
     )
 
-    api_key = ""
-    if provider != "ollama":
-        api_key = st.text_input(f"{provider.upper()} API Key", type="password",
-                                 help="Leave blank if configured on the server.")
-    else:
-        st.info("Ollama runs locally — no API key needed.")
+    provider = st.selectbox(
+        "AI Provider",
+        options=provider_options,
+        index=(
+            provider_options.index(current_provider)
+            if current_provider in provider_options
+            else 0
+        ),
+        format_func=lambda value: PROVIDER_LABELS[value],
+    )
 
-    st.markdown("---")
-    st.caption("💡 Gemini and Groq offer generous free tiers.")
+    st.session_state["provider"] = provider
+
+    model_name = DEFAULT_MODELS.get(
+        provider,
+        "",
+    )
+
+    # --------------------------------------------------------------------------
+    # Security information
+    # --------------------------------------------------------------------------
+
+    st.markdown(
+        """
+        <div class="security-note">
+        <strong>API keys are backend-only.</strong><br><br>
+        The dashboard does not request, store, or transmit API keys.
+        All provider credentials are loaded from the backend
+        <code>.env</code> file.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.write("")
+
+    st.caption(f"Model: `{model_name}`")
+
+    # --------------------------------------------------------------------------
+    # Backend URL
+    # --------------------------------------------------------------------------
+
+    with st.expander(
+        "Backend configuration",
+        expanded=False,
+    ):
+
+        api_base_input = st.text_input(
+            "FastAPI Backend URL",
+            value=st.session_state.get(
+                "api_base",
+                DEFAULT_API_BASE,
+            ),
+            help=("Example: http://localhost:8000"),
+        )
+
+        if api_base_input.strip():
+            st.session_state["api_base"] = api_base_input.strip().rstrip("/")
+
+        st.caption("API keys are not configured here.")
+
+        st.caption("Configure them in the backend .env file.")
+
+        st.divider()
+
+        st.markdown("**Backend providers**")
+
+        if LLMService:
+
+            try:
+                provider_status = LLMService.provider_status()
+
+                for item in provider_status:
+
+                    configured = item.get(
+                        "configured",
+                        False,
+                    )
+
+                    status_symbol = "✓" if configured else "○"
+
+                    provider_name = item.get(
+                        "provider",
+                        "",
+                    )
+
+                    provider_model = item.get(
+                        "model",
+                        "",
+                    )
+
+                    authentication = item.get(
+                        "authentication",
+                        "",
+                    )
+
+                    st.markdown(
+                        f"""
+                        <div class="provider-card">
+                        <strong>{status_symbol}
+                        {PROVIDER_LABELS.get(
+                            provider_name,
+                            provider_name
+                        )}</strong><br>
+                        <small>
+                        Model: {provider_model}<br>
+                        Auth: {authentication}
+                        </small>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+            except Exception as exc:
+                st.warning(f"Could not read provider status: {exc}")
+
+        else:
+            st.caption("LLMService status is unavailable in the dashboard process.")
+
+    # --------------------------------------------------------------------------
+    # Current configuration
+    # --------------------------------------------------------------------------
+
+    st.divider()
+
+    st.caption(f"Backend: {st.session_state.get('api_base')}")
+
+    st.caption(f"Provider: {PROVIDER_LABELS.get(provider, provider)}")
+
+    st.caption(f"Model: {model_name}")
+
+    # --------------------------------------------------------------------------
+    # Start over
+    # --------------------------------------------------------------------------
 
     if st.session_state.get("last_analysis"):
-        st.markdown("---")
-        if st.button("🔄 Start Over", use_container_width=True):
+
+        st.divider()
+
+        if st.button(
+            "Start Over",
+            use_container_width=True,
+        ):
             reset_all()
             st.rerun()
 
-# ==============================================================================
-# HEADER + PROGRESS STEPPER
-# ==============================================================================
-st.title("🎯 AI Resume & CV Matcher Engine")
-st.caption("Analyze ATS compatibility, close skill gaps, and export a job-tailored resume.")
 
-step = 1 if not st.session_state.get("last_analysis") else 2
-s1 = "done" if step > 1 else "active"
-s2 = "active" if step == 2 else ""
+# ==============================================================================
+# ACTIVE API CONFIG
+# ==============================================================================
+
+ACTIVE_API_BASE = (
+    st.session_state.get(
+        "api_base",
+        DEFAULT_API_BASE,
+    )
+    .strip()
+    .rstrip("/")
+)
+
+ENDPOINTS = endpoints(ACTIVE_API_BASE)
+
+
+# ==============================================================================
+# HEADER
+# ==============================================================================
+
+st.title("🎯 AI Resume & CV Matcher Engine")
+
+st.caption(
+    "Analyze ATS compatibility, identify skill gaps, "
+    "and generate job-tailored resumes."
+)
+
+
+# ==============================================================================
+# PROGRESS STEPPER
+# ==============================================================================
+
+has_analysis = bool(st.session_state.get("last_analysis"))
+
+step = 2 if has_analysis else 1
+
+step1_class = "done" if step > 1 else "active"
+
+step2_class = "active" if step == 2 else ""
+
 st.markdown(
-    f'<span class="step-badge {s1}">1</span> Upload & Analyze &nbsp;&nbsp;→&nbsp;&nbsp; '
-    f'<span class="step-badge {s2}">2</span> Review & Export',
+    f"""
+    <span class="step-badge {step1_class}">1</span>
+    Upload & Analyze
+    &nbsp;&nbsp;→&nbsp;&nbsp;
+    <span class="step-badge {step2_class}">2</span>
+    Review & Export
+    """,
     unsafe_allow_html=True,
 )
+
 st.write("")
+
 
 # ==============================================================================
 # STEP 1 — INPUT
 # ==============================================================================
+
 with st.container(border=True):
+
     col1, col2 = st.columns(2)
+
     with col1:
-        job_desc = st.text_area("Target Job Description", height=220,
-                                 placeholder="Paste the job requirements and duties here...",
-                                 value=st.session_state.get("job_desc", ""))
+
+        job_desc = st.text_area(
+            "Target Job Description",
+            height=240,
+            placeholder=(
+                "Paste the complete job description, "
+                "requirements, responsibilities and qualifications here..."
+            ),
+            value=st.session_state.get(
+                "job_desc",
+                "",
+            ),
+        )
+
     with col2:
-        uploaded_file = st.file_uploader("Upload Current Resume", type=["pdf", "docx", "txt"])
+
+        uploaded_file = st.file_uploader(
+            "Upload Current Resume",
+            type=[
+                "pdf",
+                "docx",
+                "txt",
+            ],
+        )
+
         if uploaded_file:
+
             size_kb = len(uploaded_file.getvalue()) / 1024
-            st.caption(f"📎 {uploaded_file.name} · {size_kb:.0f} KB")
+
+            st.caption(f"📎 {uploaded_file.name} · " f"{size_kb:.0f} KB")
 
     ready = bool(uploaded_file and job_desc.strip())
+
     if not ready:
-        st.caption("⬆️ Add a resume and job description to continue.")
+        st.caption("Add both a resume and job description to continue.")
 
-    if st.button("🚀 Analyze ATS Compatibility & Skill Gaps", use_container_width=True,
-                  type="primary", disabled=not ready):
-        files = {"resume_file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
-        data = {"job_description": job_desc, "provider": provider, "api_key": api_key}
+    # --------------------------------------------------------------------------
+    # Analyze
+    # --------------------------------------------------------------------------
 
-        res = api_request(ENDPOINTS["analyze"], data=data, files=files,
-                           spinner_text=f"Running ATS analysis with {provider.upper()}...")
+    if st.button(
+        "🚀 Analyze ATS Compatibility & Skill Gaps",
+        use_container_width=True,
+        type="primary",
+        disabled=not ready,
+    ):
 
-        if res is None:
-            st.error("Could not reach the backend service. Check that it's running on port 8000.")
-        elif res.status_code == 200:
-            st.session_state["last_analysis"] = res.json()
-            st.session_state["uploaded_file_data"] = (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)
-            st.session_state["job_desc"] = job_desc
-            st.rerun()
+        file_bytes = uploaded_file.getvalue()
+
+        st.session_state["uploaded_file_data"] = (
+            uploaded_file.name,
+            file_bytes,
+            uploaded_file.type or "application/octet-stream",
+        )
+
+        st.session_state["job_desc"] = job_desc
+
+        # ----------------------------------------------------------------------
+        # IMPORTANT:
+        # Only provider is sent.
+        #
+        # api_key is deliberately NOT sent.
+        # Backend gets key from .env.
+        # ----------------------------------------------------------------------
+
+        data = {
+            "job_description": job_desc,
+            "provider": provider,
+        }
+
+        files = {
+            "resume_file": (
+                uploaded_file.name,
+                file_bytes,
+                uploaded_file.type or "application/octet-stream",
+            )
+        }
+
+        response = api_request(
+            ENDPOINTS["analyze"],
+            data=data,
+            files=files,
+            spinner_text=(f"Running ATS analysis with " f"{provider.upper()}..."),
+        )
+
+        if response is None:
+
+            st.error(f"Could not reach FastAPI backend at " f"{ACTIVE_API_BASE}")
+
+        elif response.status_code == 200:
+
+            try:
+
+                result = response.json()
+
+                st.session_state["last_analysis"] = result
+
+                st.rerun()
+
+            except Exception as exc:
+
+                st.error(f"Backend returned invalid JSON: {exc}")
+
         else:
-            st.error(f"Analysis failed: {error_detail(res)}")
+
+            st.error(f"Analysis failed: " f"{error_detail(response)}")
+
+
+# ==============================================================================
+# BACKEND PROCESSING LOG
+# ==============================================================================
+
+with st.expander(
+    "Backend processing log",
+    expanded=False,
+):
+
+    st.caption(
+        "Recent LLM requests recorded by the backend. "
+        "API keys, prompts and generated content are never displayed."
+    )
+
+    logs = LLMService.recent_logs(50) if LLMService else []
+
+    if logs:
+
+        rows = []
+
+        for event in reversed(logs):
+
+            rows.append(
+                {
+                    "Time (UTC)": event.get(
+                        "timestamp",
+                        "",
+                    ),
+                    "Event": event.get(
+                        "event",
+                        "",
+                    ),
+                    "Provider": event.get(
+                        "provider",
+                        "",
+                    ),
+                    "Model": event.get(
+                        "model",
+                        "",
+                    ),
+                    "Status": event.get(
+                        "status",
+                        "",
+                    ),
+                    "Duration ms": event.get(
+                        "duration_ms",
+                        "",
+                    ),
+                    "Prompt chars": event.get(
+                        "prompt_chars",
+                        "",
+                    ),
+                    "Response chars": event.get(
+                        "response_chars",
+                        "",
+                    ),
+                    "Error": event.get(
+                        "error",
+                        "",
+                    ),
+                }
+            )
+
+        st.dataframe(
+            rows,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.caption(f"Log file: {LOG_PATH}")
+
+    else:
+
+        st.info("No backend LLM processing events have been recorded yet.")
+
 
 # ==============================================================================
 # STEP 2 — RESULTS
 # ==============================================================================
-if "last_analysis" in st.session_state:
+
+if st.session_state.get("last_analysis"):
+
     result = st.session_state["last_analysis"]
+
     st.write("")
 
+    # ==========================================================================
+    # RESULTS
+    # ==========================================================================
+
     with st.container(border=True):
-        st.subheader("📊 Results")
+
+        st.subheader("📊 Analysis Results")
+
         m1, m2, m3 = st.columns(3)
-        m1.metric("ATS Match Score", f"{result.get('ats_match_score', 0)}%")
-        m2.metric("Keyword Density", f"{result.get('keyword_density_score', 0)}%")
-        m3.metric("Missing Skills", len(result.get("missing_skills", [])))
+
+        with m1:
+
+            score_block(
+                "ATS Match Score",
+                result.get(
+                    "ats_match_score",
+                    0,
+                ),
+            )
+
+        with m2:
+
+            score_block(
+                "Keyword Density",
+                result.get(
+                    "keyword_density_score",
+                    0,
+                ),
+            )
+
+        with m3:
+
+            st.markdown(
+                '<div class="metric-label">Missing Skills</div>',
+                unsafe_allow_html=True,
+            )
+
+            st.markdown(
+                f"""
+                <div class="metric-big">
+                {len(result.get("missing_skills", []))}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        st.divider()
 
         sc1, sc2 = st.columns(2)
+
         with sc1:
-            st.markdown("**✅ Matching Skills**")
-            chips(result.get("matching_skills", []), "good")
+
+            st.markdown("**Matching Skills**")
+
+            chips(
+                result.get(
+                    "matching_skills",
+                    [],
+                ),
+                "good",
+            )
+
         with sc2:
-            st.markdown("**❌ Missing Skills**")
-            chips(result.get("missing_skills", []), "bad")
+
+            st.markdown("**Missing Skills**")
+
+            chips(
+                result.get(
+                    "missing_skills",
+                    [],
+                ),
+                "bad",
+            )
+
+    # ==========================================================================
+    # IMPROVEMENTS
+    # ==========================================================================
 
     with st.container(border=True):
+
         st.subheader("💡 Actionable Improvements")
-        for tip in result.get("improvement_suggestions", []):
-            if tip.startswith("🤖"):
-                st.markdown(tip)
-            else:
-                st.info(tip)
 
-    rec = result.get("recommendation") or {}
-    rec_format = rec.get("recommended_format", "german_corporate")
-    if rec:
-        with st.container(border=True):
-            st.subheader("🧭 AI Format Recommendation")
-            st.success(f"**{rec.get('label', 'Standard')}** — {rec.get('reason', '')}")
-
-    st.write("")
-
-    # -- Export analysis report --------------------------------------------
-    with st.expander("📥 Download Analysis Report (TXT / DOCX)"):
-        e1, e2 = st.columns(2)
-        e1.download_button("📄 .TXT", generate_txt_export(result), "resume_analysis_report.txt",
-                            "text/plain", use_container_width=True)
-        e2.download_button(
-            "📝 .DOCX", generate_docx_export(result), "resume_analysis_report.docx",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            use_container_width=True,
+        suggestions = result.get(
+            "improvement_suggestions",
+            [],
         )
+
+        if suggestions:
+
+            for suggestion in suggestions:
+
+                if suggestion.startswith("🤖"):
+
+                    st.markdown(suggestion)
+
+                else:
+
+                    st.info(suggestion)
+
+        else:
+
+            st.info("No improvement suggestions were returned.")
+
+    # ==========================================================================
+    # FORMAT RECOMMENDATION
+    # ==========================================================================
+
+    recommendation = result.get("recommendation") or {}
+
+    recommended_format = recommendation.get(
+        "recommended_format",
+        "german_corporate",
+    )
+
+    if recommendation:
+
+        with st.container(border=True):
+
+            st.subheader("🧭 CV Format Recommendation")
+
+            label = recommendation.get(
+                "label",
+                "Standard",
+            )
+
+            reason = recommendation.get(
+                "reason",
+                "",
+            )
+
+            st.success(f"**{label}** — {reason}")
+
+    # ==========================================================================
+    # ANALYSIS REPORT DOWNLOAD
+    # ==========================================================================
+
+    with st.expander(
+        "📥 Download Analysis Report",
+        expanded=False,
+    ):
+
+        export_col1, export_col2 = st.columns(2)
+
+        with export_col1:
+
+            st.download_button(
+                "📄 Download TXT",
+                data=generate_txt_export(result),
+                file_name="resume_analysis_report.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+
+        with export_col2:
+
+            st.download_button(
+                "📝 Download DOCX",
+                data=generate_docx_export(result),
+                file_name="resume_analysis_report.docx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "wordprocessingml.document"
+                ),
+                use_container_width=True,
+            )
+
+    # ==========================================================================
+    # GENERATION
+    # ==========================================================================
 
     st.divider()
+
     st.header("✨ Generate a Complete Tailored CV")
 
-    tab1, tab2 = st.tabs(["📄 Standard ATS Resume (DOCX)", "🇩🇪 German Lebenslauf (PDF / TEX)"])
+    tab1, tab2 = st.tabs(
+        [
+            "📄 Standard ATS Resume",
+            "🇩🇪 German Lebenslauf",
+        ]
+    )
+
+    # ==========================================================================
+    # STANDARD DOCX
+    # ==========================================================================
 
     with tab1:
-        st.caption("Clean, single-column Word document formatted for global ATS systems.")
-        if st.button("🪄 Build Tailored Resume", use_container_width=True, type="primary"):
-            data = {"job_description": st.session_state["job_desc"], "provider": provider, "api_key": api_key}
-            res = api_request(ENDPOINTS["full_docx"], data=data, files=build_files_payload(),
-                               spinner_text=f"Building tailored resume with {provider.upper()}...")
-            if res and res.status_code == 200:
-                st.success("🎉 Resume ready!")
-                st.download_button(
-                    "📥 Download Resume (.DOCX)", res.content, "Optimized_Tailored_Resume.docx",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    use_container_width=True,
+
+        st.caption("Clean single-column Word document optimized for ATS systems.")
+
+        if st.button(
+            "🪄 Build Tailored Resume",
+            use_container_width=True,
+            type="primary",
+        ):
+
+            if not build_files_payload():
+
+                st.error(
+                    "Resume file is no longer available. " "Please upload it again."
                 )
+
             else:
-                st.error(f"Generation failed: {error_detail(res)}")
+
+                data = {
+                    "job_description": st.session_state["job_desc"],
+                    "provider": provider,
+                }
+
+                response = api_request(
+                    ENDPOINTS["full_docx"],
+                    data=data,
+                    files=build_files_payload(),
+                    spinner_text=(
+                        f"Building tailored resume with " f"{provider.upper()}..."
+                    ),
+                )
+
+                if response and response.status_code == 200:
+
+                    st.success("Resume ready.")
+
+                    st.download_button(
+                        "📥 Download Resume (.DOCX)",
+                        response.content,
+                        "Optimized_Tailored_Resume.docx",
+                        (
+                            "application/vnd.openxmlformats-officedocument."
+                            "wordprocessingml.document"
+                        ),
+                        use_container_width=True,
+                    )
+
+                else:
+
+                    st.error(f"Generation failed: " f"{error_detail(response)}")
+
+    # ==========================================================================
+    # GERMAN CV
+    # ==========================================================================
 
     with tab2:
-        st.caption("Select a layout, then compile a PDF or grab the raw LaTeX source.")
+
+        st.caption("Generate a German-style Lebenslauf as PDF or raw LaTeX source.")
+
         template_options = list(TEMPLATE_LABELS.keys())
-        default_idx = template_options.index(rec_format) if rec_format in template_options else 0
-        selected_layout = st.selectbox(
-            "Layout Style", options=template_options, index=default_idx,
-            format_func=lambda x: TEMPLATE_LABELS[x],
+
+        default_index = (
+            template_options.index(recommended_format)
+            if recommended_format in template_options
+            else 0
         )
 
-        b1, b2 = st.columns(2)
+        selected_layout = st.selectbox(
+            "Layout Style",
+            options=template_options,
+            index=default_index,
+            format_func=lambda value: TEMPLATE_LABELS[value],
+        )
+
         common_data = {
             "job_description": st.session_state["job_desc"],
             "layout_style": selected_layout,
             "template_style": selected_layout,
             "provider": provider,
-            "api_key": api_key,
         }
 
+        b1, b2 = st.columns(2)
+
+        # ----------------------------------------------------------------------
+        # PDF
+        # ----------------------------------------------------------------------
+
         with b1:
-            if st.button("📄 Build PDF", use_container_width=True, type="primary"):
-                res = api_request(ENDPOINTS["german_pdf"], data=common_data, files=build_files_payload(),
-                                   spinner_text=f"Compiling PDF ({selected_layout})...")
-                if res and res.status_code == 200:
-                    st.success("🎉 PDF ready!")
-                    st.download_button(
-                        "📥 Download (.PDF)", res.content, f"Lebenslauf_{selected_layout}.pdf",
-                        "application/pdf", use_container_width=True,
+
+            if st.button(
+                "📄 Build PDF",
+                use_container_width=True,
+                type="primary",
+            ):
+
+                if not build_files_payload():
+
+                    st.error(
+                        "Resume file is no longer available. " "Please upload it again."
                     )
+
                 else:
-                    st.error(f"Compilation error: {error_detail(res)}")
+
+                    response = api_request(
+                        ENDPOINTS["german_pdf"],
+                        data=common_data,
+                        files=build_files_payload(),
+                        spinner_text=(
+                            f"Generating German PDF " f"({selected_layout})..."
+                        ),
+                    )
+
+                    if response and response.status_code == 200:
+
+                        st.success("PDF ready.")
+
+                        st.download_button(
+                            "📥 Download PDF",
+                            response.content,
+                            f"Lebenslauf_{selected_layout}.pdf",
+                            "application/pdf",
+                            use_container_width=True,
+                        )
+
+                    else:
+
+                        st.error(f"PDF generation failed: " f"{error_detail(response)}")
+
+        # ----------------------------------------------------------------------
+        # TEX
+        # ----------------------------------------------------------------------
 
         with b2:
-            if st.button("🛠️ Build TEX Source", use_container_width=True):
-                res = api_request(ENDPOINTS["german_tex"], data=common_data, files=build_files_payload(),
-                                   spinner_text="Generating LaTeX source...")
-                if res and res.status_code == 200:
-                    st.success("🎉 TEX file ready!")
-                    st.download_button(
-                        "📥 Download (.TEX)", res.content, f"Lebenslauf_{selected_layout}.tex",
-                        "text/plain", use_container_width=True,
+
+            if st.button(
+                "🛠️ Build TEX Source",
+                use_container_width=True,
+            ):
+
+                if not build_files_payload():
+
+                    st.error(
+                        "Resume file is no longer available. " "Please upload it again."
                     )
+
                 else:
-                    st.error(f"Generation error: {error_detail(res)}")
+
+                    response = api_request(
+                        ENDPOINTS["german_tex"],
+                        data=common_data,
+                        files=build_files_payload(),
+                        spinner_text=("Generating LaTeX source..."),
+                    )
+
+                    if response and response.status_code == 200:
+
+                        st.success("TEX file ready.")
+
+                        st.download_button(
+                            "📥 Download TEX",
+                            response.content,
+                            f"Lebenslauf_{selected_layout}.tex",
+                            "text/plain",
+                            use_container_width=True,
+                        )
+
+                    else:
+
+                        st.error(f"TEX generation failed: " f"{error_detail(response)}")

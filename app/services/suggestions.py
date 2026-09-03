@@ -1,4 +1,5 @@
-from typing import List, Dict, Any
+# suggestions.py
+from typing import List
 
 
 def generate_recommendations(
@@ -6,35 +7,40 @@ def generate_recommendations(
 ) -> List[str]:
     """
     Generates actionable optimization advice based on resume analysis.
+    Enforces additive enrichment to reach 100% ATS alignment without altering facts.
     """
     recommendations = []
 
-    # Score-based advice
+    # Score-based tier recommendations
     if ats_score < 40.0:
         recommendations.append(
-            "Your resume content has low alignment with the job description. Consider re-writing bullet points to target key job requirements."
+            "CRITICAL GAP: Low ATS alignment detected. Expand your existing work experience and project entries by adding exact tools, frameworks, and methodologies required by the job posting."
         )
-    elif ats_score < 65.0:
+    elif ats_score < 70.0:
         recommendations.append(
-            "Moderate alignment found. Try integrating missing core technical skills into your work experience section."
-        )
-
-    # Missing skill advice
-    if missing_skills:
-        top_missing = missing_skills[:3]
-        skills_str = ", ".join(top_missing)
-        recommendations.append(
-            f"Add critical missing keywords to your Technical Skills section: {skills_str}."
-        )
-
-    # Formatting and keyword advice
-    if len(matching_skills) < 5:
-        recommendations.append(
-            "Include more domain-specific tool names and frameworks mentioned in the job description to improve ATS parsing."
+            "MODERATE ALIGNMENT: Weave missing technical keywords directly into your existing experience bullet points. Ensure tools are contextualized within project accomplishments."
         )
     else:
         recommendations.append(
-            "Good key term match! Ensure keywords appear naturally inside achievements rather than just a standalone skills list."
+            "STRONG ALIGNMENT: Excellent key term match! Verify that missing niche skills are integrated into both your Technical Skills block and relevant accomplishment descriptions."
+        )
+
+    # Missing skill integration
+    if missing_skills:
+        top_missing = missing_skills[:7]
+        skills_str = ", ".join(top_missing)
+        recommendations.append(
+            f"KEYWORD INJECTION: Add these missing core technical terms to your Technical Skills section and existing project descriptions: {skills_str}."
+        )
+
+    # Domain depth & tool coverage
+    if len(matching_skills) < 6:
+        recommendations.append(
+            "TOOL DEPTH: Expand technical specificity. Explicitly name version control systems, deployment environments, databases, and monitoring tools mentioned in the job description."
+        )
+    else:
+        recommendations.append(
+            "ATS OPTIMIZATION: Ensure all matched technical terms appear naturally within detailed result metrics (e.g., impact, system scale, or optimization outcomes)."
         )
 
     return recommendations

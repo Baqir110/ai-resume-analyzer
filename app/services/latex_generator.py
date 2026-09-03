@@ -7,50 +7,31 @@ from typing import List, Optional
 
 from app.services.llm_provider import LLMService
 
-
 # ============================================================
 # LaTeX helpers
 # ============================================================
 
+
 def latex_escape_url(url: str) -> str:
-    """
-    Safely prepare a URL for use as the first argument of \\href.
-    """
+    """Safely prepare a URL for use as the first argument of \href."""
     url = url.strip()
 
-    # Remove Markdown link wrappers:
-    # [https://example.com](https://example.com)
+    # Remove Markdown link wrappers: [https://example.com](https://example.com)
     match = re.fullmatch(r"\[([^\]]+)\]\(([^)]+)\)", url)
     if match:
         url = match.group(2).strip()
 
-    # Remove accidental surrounding braces or backticks.
     if url.startswith("{") and url.endswith("}"):
         url = url[1:-1].strip()
 
     url = url.strip("`").strip()
-
-    # URLs should contain literal underscores.
     url = url.replace(r"\_", "_")
 
     return url
 
 
 def normalize_latex_links(text: str) -> str:
-    """
-    Convert malformed Markdown links and constructs into safe
-    LaTeX \\hrlink commands.
-
-    Handles:
-        [GitHub](https://github.com/example)
-        \\hrlink{https://github.com/example}{GitHub}
-        malformed nested Markdown/LaTeX combinations
-    """
-
-    # --------------------------------------------------------
-    # Repair already-generated \\hrlink commands containing
-    # Markdown links in the URL argument.
-    # --------------------------------------------------------
+    """Convert malformed Markdown links and constructs into safe LaTeX \hrlink commands."""
     malformed_hrlink = re.compile(
         r"""
         \\hrlink
@@ -70,40 +51,21 @@ def normalize_latex_links(text: str) -> str:
     def repair_hrlink(match: re.Match) -> str:
         markdown_url = match.group(2).strip()
         label = match.group(3).strip() or match.group(1).strip() or "Link"
-
         url = latex_escape_url(markdown_url)
-
         return rf"\hrlink{{{url}}}{{{label}}}"
 
     text = malformed_hrlink.sub(repair_hrlink, text)
 
-    # --------------------------------------------------------
-    # Convert normal Markdown links:
-    # [GitHub](https://github.com/foo)
-    # ->
-    # \\hrlink{https://github.com/foo}{GitHub}
-    # --------------------------------------------------------
-    markdown_link = re.compile(
-        r"\[([^\]]+)\]\((https?://[^)\s]+)\)"
-    )
+    markdown_link = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 
     def convert_markdown_link(match: re.Match) -> str:
         label = match.group(1).strip()
         url = latex_escape_url(match.group(2))
-
         return rf"\hrlink{{{url}}}{{{label}}}"
 
     text = markdown_link.sub(convert_markdown_link, text)
 
-    # --------------------------------------------------------
-    # Remove Markdown links that may have been escaped in
-    # unusual ways by the LLM.
-    # Example:
-    # [https://example.com](https://example.com)
-    # --------------------------------------------------------
-    bare_markdown_url = re.compile(
-        r"\[([^\]]+)\]\((https?://[^)\s]+)\)"
-    )
+    bare_markdown_url = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 
     text = bare_markdown_url.sub(
         lambda m: rf"\hrlink{{{latex_escape_url(m.group(2))}}}{{{m.group(1).strip()}}}",
@@ -113,89 +75,66 @@ def normalize_latex_links(text: str) -> str:
     return text
 
 
-def clean_body_for_latex(body_text: str) -> str:
-    """
-    Sanitize generated body content without breaking LaTeX macros.
-    """
+def clean_llm_response_to_latex(text: str) -> str:
+    """Extracts valid LaTeX content and strips AI chatter/meta-language."""
+    if not text:
+        return ""
 
+    text = text.strip()
+
+    if (
+        text.startswith("I'm ready")
+        or text.startswith("Sure")
+        or "Please provide" in text
+    ):
+        return r"\section*{Profil}\n\noindent Resume optimization pending input."
+
+    return text
+
+
+def strip_code_fences(text: str) -> str:
+    if not text:
+        return ""
+
+    text = text.strip()
+    text = re.sub(r"^\s*```(?:latex|tex)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```\s*$", "", text)
+    return text.strip()
+
+
+def clean_body_for_latex(body_text: str) -> str:
+    """Sanitize generated body content without breaking LaTeX macros."""
     body_text = normalize_latex_links(body_text)
 
-    # --------------------------------------------------------
-    # Fix illegal line breaks that cause:
-    #
-    # "There's no line here to end"
-    #
-    # Remove standalone double-backslash line breaks before
-    # sections/environments or excessive blank lines.
-    # --------------------------------------------------------
-    body_text = re.sub(
-        r"\\\\(?=\s*\\section\*?\{)",
-        "",
-        body_text,
-    )
+    # Fix illegal line breaks
+    body_text = re.sub(r"\\\\(?=\s*\\section\*?\{)", "", body_text)
+    body_text = re.sub(r"\\\\(?=\s*\\begin\{)", "", body_text)
+    body_text = re.sub(r"\\\\(?=\s*\\end\{)", "", body_text)
+    body_text = re.sub(r"\\\\(?=\s*\n\s*\n)", "", body_text)
 
-    body_text = re.sub(
-        r"\\\\(?=\s*\\begin\{)",
-        "",
-        body_text,
-    )
-
-    body_text = re.sub(
-        r"\\\\(?=\s*\\end\{)",
-        "",
-        body_text,
-    )
-
-    body_text = re.sub(
-        r"\\\\(?=\s*\n\s*\n)",
-        "",
-        body_text,
-    )
-
-    # --------------------------------------------------------
-    # Normalize Unicode characters that frequently break
-    # pdflatex or produce inconsistent output.
-    # --------------------------------------------------------
+    # Normalize Unicode characters
     replacements = {
-        "\u202f": " ",          # narrow no-break space
-        "\u200b": "",           # zero-width space
-        "\u2013": "--",         # en dash
-        "\u2014": "---",        # em dash
-        "\u2011": "-",          # non-breaking hyphen
-        "\u2018": "'",          # left single quote
-        "\u2019": "'",          # right single quote
-        "\u201c": '"',          # left double quote
-        "\u201d": '"',          # right double quote
-        "\xa0": " ",            # non-breaking space
+        "\u202f": " ",
+        "\u200b": "",
+        "\u2013": "--",
+        "\u2014": "---",
+        "\u2011": "-",
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\xa0": " ",
         " \vert{} ": r" \quad$\cdot$\quad ",
     }
 
     for char, repl in replacements.items():
         body_text = body_text.replace(char, repl)
 
-    # --------------------------------------------------------
-    # Remove accidental Markdown code fences.
-    # --------------------------------------------------------
     body_text = strip_code_fences(body_text)
 
-    # --------------------------------------------------------
-    # Safely escape unescaped ampersands and percent signs.
-    #
-    # Do not modify already escaped:
-    # \&
-    # \%
-    # --------------------------------------------------------
-    body_text = re.sub(
-        r"(?<!\\)&",
-        r"\&",
-        body_text,
-    )
-
-    body_text = re.sub(
-        r"(?<!\\)%",
-        r"\%",
-        body_text,
-    )
+    # Escape unescaped ampersands and percent signs
+    body_text = re.sub(r"(?<!\\)&", r"\&", body_text)
+    body_text = re.sub(r"(?<!\\)%", r"\%", body_text)
 
     return body_text.strip()
 
@@ -239,7 +178,7 @@ GERMAN_CORPORATE_LATEX_TEMPLATE = r"""
     {}{0em}{}
     [\vspace{-3pt}\color{subgray}\rule{\textwidth}{0.6pt}]
 
-\titlespacing{\section}{0pt}{5pt}{3pt}
+\titlespacing{\section}{0pt}{6pt}{3pt}
 
 \setlist[itemize]{
     leftmargin=1.1em,
@@ -312,7 +251,7 @@ RESUME_BODY_PLACEHOLDER
 GERMAN_ATS_LATEX_TEMPLATE = r"""
 \documentclass[10pt,a4paper]{article}
 
-\usepackage[top=1.0cm,bottom=1.0cm,left=1.2cm,right=1.2cm]{geometry}
+\usepackage[top=1.2cm,bottom=1.2cm,left=1.5cm,right=1.5cm]{geometry}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage{helvet}
@@ -320,15 +259,14 @@ GERMAN_ATS_LATEX_TEMPLATE = r"""
 \usepackage{xcolor}
 \usepackage{titlesec}
 \usepackage{enumitem}
-\usepackage[normalem]{ulem}
 \usepackage{hyperref}
 
 \hyphenpenalty=10000
 \exhyphenpenalty=10000
 
-\definecolor{primary}{HTML}{172033}
-\definecolor{secondary}{HTML}{475569}
-\definecolor{linkcolor}{HTML}{1D4ED8}
+\definecolor{primary}{HTML}{000000}
+\definecolor{secondary}{HTML}{333333}
+\definecolor{linkcolor}{HTML}{0000EE}
 
 \hypersetup{
     colorlinks=true,
@@ -337,146 +275,39 @@ GERMAN_ATS_LATEX_TEMPLATE = r"""
     pdfborder={0 0 0}
 }
 
-\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{\uline{#2}}}
+\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{#2}}
 
 \titleformat{\section}
-    {\large\bfseries\color{primary}}
+    {\large\bfseries\color{primary}\uppercase}
     {}{0em}{}
-    [\vspace{-3pt}\color{primary}\rule{\textwidth}{0.6pt}]
+    [\vspace{-2pt}\rule{\textwidth}{0.8pt}]
 
-\titlespacing{\section}{0pt}{5pt}{3pt}
+\titlespacing{\section}{0pt}{8pt}{4pt}
 
 \setlist[itemize]{
-    leftmargin=1.1em,
-    itemsep=1pt,
-    topsep=1pt,
+    leftmargin=1.2em,
+    itemsep=2pt,
+    topsep=2pt,
     parsep=0pt
 }
 
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{1pt}
+\setlength{\parskip}{2pt}
 
 \newcommand{\jobheader}[3]{%
     \noindent
-    \textbf{\color{primary}#1}, #2
+    \textbf{#1} -- #2
     \hfill
-    \textit{\color{secondary}#3}
+    \textbf{#3}
     \par\vspace{1pt}%
 }
 
 \newcommand{\projheader}[3]{%
     \noindent
-    \textbf{\color{primary}#1}
-    \textit{\color{secondary}(#2)}
+    \textbf{#1} (#2)
     \ifx\relax#3\relax
     \else
-        \hfill\hrlink{#3}{GitHub}
-    \fi
-    \par\vspace{1pt}%
-}
-
-\pagestyle{empty}
-
-\begin{document}
-
-\begin{center}
-
-    {\Huge\bfseries\color{primary} Muhammad Baqir}\\[3pt]
-
-    {\large\bfseries\color{primary}
-    IT Support Engineer \textbar{} DevOps \textbar{} MLOps}\\[4pt]
-
-    {\small\color{secondary}
-        Bamberg, Deutschland (Umzugsbereit)
-        \quad$\cdot$\quad
-        +49 152 17975480
-        \quad$\cdot$\quad
-        \hrlink{mailto:hzindabad44@gmail.com}{hzindabad44@gmail.com}
-        \quad$\cdot$\quad
-        \hrlink{https://www.linkedin.com/in/muhammadbaqir-it}{LinkedIn}
-        \quad$\cdot$\quad
-        \hrlink{https://github.com/Baqir110}{GitHub}
-    }
-
-\end{center}
-
-RESUME_BODY_PLACEHOLDER
-
-\vspace{5pt}
-
-\noindent
-{\small\color{secondary}Bamberg, \today}
-
-\end{document}
-"""
-
-
-# ============================================================
-# 3. GERMAN CLASSIC
-# ============================================================
-
-GERMAN_CLASSIC_LATEX_TEMPLATE = r"""
-\documentclass[10pt,a4paper]{article}
-
-\usepackage[top=1.0cm,bottom=1.0cm,left=1.2cm,right=1.2cm]{geometry}
-\usepackage[T1]{fontenc}
-\usepackage[utf8]{inputenc}
-\usepackage{helvet}
-\renewcommand{\familydefault}{\sfdefault}
-\usepackage{xcolor}
-\usepackage{titlesec}
-\usepackage{enumitem}
-\usepackage[normalem]{ulem}
-\usepackage{hyperref}
-
-\hyphenpenalty=10000
-\exhyphenpenalty=10000
-
-\definecolor{primary}{HTML}{1F2937}
-\definecolor{secondary}{HTML}{4B5563}
-\definecolor{linkcolor}{HTML}{1D4ED8}
-
-\hypersetup{
-    colorlinks=true,
-    urlcolor=linkcolor,
-    linkcolor=linkcolor,
-    pdfborder={0 0 0}
-}
-
-\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{\uline{#2}}}
-
-\titleformat{\section}
-    {\large\bfseries\color{primary}}
-    {}{0em}{}
-    [\vspace{-3pt}\color{secondary}\rule{\textwidth}{0.5pt}]
-
-\titlespacing{\section}{0pt}{5pt}{3pt}
-
-\setlist[itemize]{
-    leftmargin=1.1em,
-    itemsep=1pt,
-    topsep=1pt,
-    parsep=0pt
-}
-
-\setlength{\parindent}{0pt}
-\setlength{\parskip}{1pt}
-
-\newcommand{\jobheader}[3]{%
-    \noindent
-    \textbf{#1}, #2
-    \hfill
-    \textit{\color{secondary}#3}
-    \par\vspace{1pt}%
-}
-
-\newcommand{\projheader}[3]{%
-    \noindent
-    \textbf{#1}
-    \textit{\color{secondary}(#2)}
-    \ifx\relax#3\relax
-    \else
-        \hfill\hrlink{#3}{GitHub}
+        \hfill\hrlink{#3}{[GitHub]}
     \fi
     \par\vspace{1pt}%
 }
@@ -489,10 +320,10 @@ GERMAN_CLASSIC_LATEX_TEMPLATE = r"""
 
     {\LARGE\bfseries Muhammad Baqir}\\[3pt]
 
-    {\large IT Support Engineer \textbar{} DevOps \textbar{} MLOps}\\[5pt]
+    {\large IT Support Engineer \textbar{} DevOps \textbar{} MLOps}\\[4pt]
 
     {\small
-        Bamberg, Deutschland (Umzugsbereit)
+        Bamberg, Deutschland
         \quad$\cdot$\quad
         +49 152 17975480
         \quad$\cdot$\quad
@@ -505,18 +336,112 @@ GERMAN_CLASSIC_LATEX_TEMPLATE = r"""
 
 \end{center}
 
-\vspace{2pt}
+RESUME_BODY_PLACEHOLDER
 
-\hrule
+\vspace{6pt}
 
-\vspace{2pt}
+\noindent
+{\small Bamberg, \today}
+
+\end{document}
+"""
+
+
+# ============================================================
+# 3. GERMAN CLASSIC
+# ============================================================
+
+GERMAN_CLASSIC_LATEX_TEMPLATE = r"""
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[top=1.5cm,bottom=1.5cm,left=1.5cm,right=1.5cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{mathptmx}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{hyperref}
+
+\definecolor{primary}{HTML}{111111}
+\definecolor{secondary}{HTML}{444444}
+\definecolor{linkcolor}{HTML}{000000}
+
+\hypersetup{
+    colorlinks=true,
+    urlcolor=linkcolor,
+    linkcolor=linkcolor,
+    pdfborder={0 0 0}
+}
+
+\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{#2}}
+
+\titleformat{\section}
+    {\Large\bfseries\color{primary}}
+    {}{0em}{}
+    [\vspace{-2pt}\hrule height 0.5pt]
+
+\titlespacing{\section}{0pt}{10pt}{4pt}
+
+\setlist[itemize]{
+    leftmargin=1.3em,
+    itemsep=2pt,
+    topsep=2pt,
+    parsep=0pt
+}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{2pt}
+
+\newcommand{\jobheader}[3]{%
+    \noindent
+    \textbf{#1}, #2 \hfill \textit{#3}
+    \par\vspace{1pt}%
+}
+
+\newcommand{\projheader}[3]{%
+    \noindent
+    \textbf{#1} \textit{(#2)}
+    \ifx\relax#3\relax
+    \else
+        \hfill\hrlink{#3}{Link}
+    \fi
+    \par\vspace{1pt}%
+}
+
+\pagestyle{empty}
+
+\begin{document}
+
+\begin{center}
+
+    {\huge\bfseries Muhammad Baqir}\\[4pt]
+
+    {\large IT Support Engineer \textbar{} DevOps \textbar{} MLOps}\\[6pt]
+
+    {\small
+        Bamberg, Deutschland (Umzugsbereit)
+        \quad$\cdot$\quad
+        +49 152 17975480
+        \quad$\cdot$\quad
+        \hrlink{mailto:hzindabad44@gmail.com}{hzindabad44@gmail.com}\\
+        \hrlink{https://www.linkedin.com/in/muhammadbaqir-it}{LinkedIn}
+        \quad$\cdot$\quad
+        \hrlink{https://github.com/Baqir110}{GitHub}
+    }
+
+\end{center}
+
+\vspace{4pt}
+\hrule height 1pt
+\vspace{6pt}
 
 RESUME_BODY_PLACEHOLDER
 
-\vspace{5pt}
+\vspace{10pt}
 
 \noindent
-{\small\color{secondary}Bamberg, \today}
+{\small Bamberg, den \today}
 
 \end{document}
 """
@@ -543,9 +468,10 @@ GERMAN_MODERN_LATEX_TEMPLATE = r"""
 \hyphenpenalty=10000
 \exhyphenpenalty=10000
 
-\definecolor{primary}{HTML}{0F172A}
-\definecolor{secondary}{HTML}{475569}
-\definecolor{linkcolor}{HTML}{1D4ED8}
+\definecolor{primary}{HTML}{0284C7}
+\definecolor{darkgray}{HTML}{1E293B}
+\definecolor{secondary}{HTML}{64748B}
+\definecolor{linkcolor}{HTML}{0284C7}
 
 \hypersetup{
     colorlinks=true,
@@ -559,9 +485,9 @@ GERMAN_MODERN_LATEX_TEMPLATE = r"""
 \titleformat{\section}
     {\large\bfseries\color{primary}}
     {}{0em}{}
-    [\vspace{-3pt}\color{secondary}\rule{\textwidth}{0.5pt}]
+    [\vspace{-2pt}\color{primary}\rule{\textwidth}{1.2pt}]
 
-\titlespacing{\section}{0pt}{5pt}{3pt}
+\titlespacing{\section}{0pt}{6pt}{3pt}
 
 \setlist[itemize]{
     leftmargin=1.1em,
@@ -575,7 +501,7 @@ GERMAN_MODERN_LATEX_TEMPLATE = r"""
 
 \newcommand{\jobheader}[3]{%
     \noindent
-    \textbf{\color{primary}#1}, #2
+    \textbf{\color{darkgray}#1}, \textcolor{secondary}{#2}
     \hfill
     \textit{\color{secondary}#3}
     \par\vspace{1pt}%
@@ -583,7 +509,7 @@ GERMAN_MODERN_LATEX_TEMPLATE = r"""
 
 \newcommand{\projheader}[3]{%
     \noindent
-    \textbf{\color{primary}#1}
+    \textbf{\color{darkgray}#1}
     \textit{\color{secondary}(#2)}
     \ifx\relax#3\relax
     \else
@@ -598,7 +524,7 @@ GERMAN_MODERN_LATEX_TEMPLATE = r"""
 
 \begin{center}
 
-    {\Huge\bfseries\color{primary} Muhammad Baqir}\\[3pt]
+    {\Huge\bfseries\color{darkgray} Muhammad Baqir}\\[3pt]
 
     {\large\bfseries\color{primary}
     IT Support Engineer \textbar{} DevOps \textbar{} MLOps}\\[4pt]
@@ -643,15 +569,14 @@ INTERNATIONAL_ATS_LATEX_TEMPLATE = r"""
 \usepackage{xcolor}
 \usepackage{titlesec}
 \usepackage{enumitem}
-\usepackage[normalem]{ulem}
 \usepackage{hyperref}
 
 \hyphenpenalty=10000
 \exhyphenpenalty=10000
 
-\definecolor{primary}{HTML}{172033}
-\definecolor{secondary}{HTML}{475569}
-\definecolor{linkcolor}{HTML}{1D4ED8}
+\definecolor{primary}{HTML}{111827}
+\definecolor{secondary}{HTML}{4B5563}
+\definecolor{linkcolor}{HTML}{2563EB}
 
 \hypersetup{
     colorlinks=true,
@@ -660,7 +585,7 @@ INTERNATIONAL_ATS_LATEX_TEMPLATE = r"""
     pdfborder={0 0 0}
 }
 
-\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{\uline{#2}}}
+\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{#2}}
 
 \titleformat{\section}
     {\large\bfseries\color{primary}}
@@ -743,49 +668,19 @@ CV_TEMPLATES = {
 
 
 # ============================================================
-# LLM output helpers
-# ============================================================
-
-def strip_code_fences(text: str) -> str:
-    """
-    Remove Markdown code fences from LLM output.
-    """
-    if not text:
-        return ""
-
-    text = text.strip()
-
-    text = re.sub(
-        r"^\s*```(?:latex|tex)?\s*",
-        "",
-        text,
-        flags=re.IGNORECASE,
-    )
-
-    text = re.sub(
-        r"\s*```\s*$",
-        "",
-        text,
-    )
-
-    return text.strip()
-
-
-# ============================================================
 # Generate LaTeX CV
 # ============================================================
+
 
 def generate_german_latex_content(
     resume_text: str,
     job_description: str,
     missing_skills: List[str],
     provider: str = "gemini",
+    model_name: Optional[str] = None,
     api_key: Optional[str] = None,
     layout_style: str = "german_corporate",
 ) -> str:
-    """
-    Generate a one-page ATS-friendly LaTeX CV.
-    """
 
     if layout_style not in CV_TEMPLATES:
         layout_style = "german_corporate"
@@ -820,148 +715,67 @@ def generate_german_latex_content(
 """
 
     prompt = f"""
-You are an expert German recruiter, ATS resume specialist,
-and technical CV writer.
-
-Reformat the candidate's CV body content to fit strictly on
-EXACTLY ONE (1) PAGE.
+Optimize and enrich the candidate's CV body content to achieve the highest possible match against the target job description.
 
 Target Job Description:
-
-{job_description}
+{job_description or "General IT Support / DevOps position."}
 
 Critical Skills to Integrate Naturally:
-
-{', '.join(missing_skills)}
+{', '.join(missing_skills) if missing_skills else "None provided."}
 
 Original Resume Text:
-
 {resume_text}
 
 Selected Layout Style:
-
 {layout_style}
 
-STRICT STRUCTURAL AND MACRO RULES:
+STRICT STRUCTURAL AND CONTENT RULES:
 
-1. DO NOT GENERATE ANY CONTACT HEADER, SIDEBAR, OR NAME BLOCK
-   AT THE TOP.
+1. DO NOT GENERATE ANY CONTACT HEADER, SIDEBAR, OR NAME BLOCK AT THE TOP.
+   The document preamble already renders candidate contact headers.
+   Start directly with the first section:
+   \section*{{Profil}}
 
-   Do NOT output:
-   - Muhammad Baqir
-   - Kontakt
-   - phone numbers
-   - email addresses
-   - LinkedIn header
-   - GitHub header
+2. PRESERVE ALL ORIGINAL DATA:
+   - Do NOT delete any existing work experience entries, degrees, or projects.
+   - Do NOT change degree titles or company names.
+   - You MAY expand existing experience and project bullet points by adding technical context, missing keywords, and relevant details from the job description.
 
-   The preamble header already renders this.
+3. NO ARTIFICIAL LENGTH LIMITS:
+   - Do NOT prune or drop accomplishments to force the content onto one page.
+   - Preserve all existing content while adding missing target skills.
 
-   START DIRECTLY WITH THE FIRST SECTION:
+4. WORK EXPERIENCE & PROJECTS:
+   - Every bullet point inside \begin{{itemize}} MUST start strictly with \item.
+   - Use \jobheader{{Role | Sub-role}}{{Company, City}}{{Dates}} for jobs.
+   - Use \projheader{{Project Name}}{{Tech Stack}}{{https://github.com/Baqir110/repo-name}} for projects.
 
-   \\section*{{Profil}}
-
-2. NEVER use double backslashes (\\\\) at the end of
-   paragraphs or headers.
-
-   Use normal empty lines for paragraph breaks.
-
-3. Keep work experience bullet points concise:
-   maximum 3-4 bullets per entry.
-
-4. WORK EXPERIENCE LISTS:
-
-   EVERY bullet point inside \\begin{{itemize}} MUST start
-   strictly with \\item.
-
-   NEVER drop bullet markers.
-
-5. JOB HEADERS:
-
-   Keep role, company, and dates on ONE line:
-
-   \\jobheader{{Role | Sub-role}}{{Company, City}}{{Dates}}
-
-6. PROJECT HEADERS:
-
-   The third argument MUST be a plain URL string without
-   LaTeX macros:
-
-   \\projheader{{Project Name}}{{Tech Stack}}{{https://github.com/Baqir110/repo-name}}
-
-7. PROJECT DEMO & DOCS LINKS:
-
-   Put live links under projects in a SINGLE bullet item
-   using \\hrlink:
-
-   \\item \\hrlink{{https://demo.url}}{{Live Demo}}
-   \\quad$\\cdot$\\quad
-   \\hrlink{{https://docs.url}}{{API Docs}}
-
-8. SKILLS SECTION:
-
+5. SKILLS SECTION:
    Format inline using bold category titles:
+   \textbf{{Programmierung \& CI/CD:}} Python, SQL, Bash, Git, GitHub Actions
+   \textbf{{Backend, Cloud \& MLOps:}} FastAPI, Docker, Kubernetes, PostgreSQL, Redis
+   \textbf{{Monitoring \& Support:}} Prometheus, Grafana, Azure Monitor, Nagios, Zabbix
 
-   \\textbf{{Programmierung \\& CI/CD:}} Python, SQL, Bash,
-   Git, GitHub Actions
-
-   \\textbf{{Backend, Cloud \\& MLOps:}} FastAPI, Docker,
-   Kubernetes, PostgreSQL, Redis
-
-   \\textbf{{Monitoring \\& Support:}} Prometheus, Grafana,
-   Azure Monitor, Nagios, Zabbix
-
-   \\textbf{{Netzwerk \\& Sicherheit:}} TCP/IP, DNS, DHCP,
-   VPN, Palo Alto Firewalls, Cisco
-
-9. SECTION ORDERING:
-
+6. SECTION ORDERING:
 {section_names}
 
-10. Escape special characters inside normal text:
+7. Escape special characters inside normal text:
+   \& for &
+   \% for %
+   \_ for _
+   \textgreater{{}} for >
+   \textless{{}} for <
 
-   \\& for &
-   \\% for %
-   \\_ for _
-   \\textgreater{{}} for >
-   \\textless{{}} for <
-
-11. Return RAW LaTeX body content ONLY.
-
-    Do not include:
-    - code fences
-    - explanations
-    - Markdown
-    - commentary
-
-12. Do not create a second document environment.
-
-13. Do not include:
-    \\documentclass
-    \\usepackage
-    \\begin{{document}}
-    \\end{{document}}
-
-14. Do not generate a contact section because the template
-    already contains the candidate's contact information.
-
-15. Keep the output ATS-friendly:
-    - simple section headings
-    - standard text
-    - no tables
-    - no columns
-    - no graphics
-    - no icons
-    - no text boxes
+8. Return RAW LaTeX body content ONLY (No code fences, markdown, or conversational text).
 """
 
     raw_latex = LLMService.generate(
         prompt=prompt,
         provider=provider,
-        api_key=api_key,
+        model_name=model_name,
     )
 
-    clean_body = strip_code_fences(raw_latex)
+    clean_body = clean_llm_response_to_latex(raw_latex)
     clean_body = clean_body_for_latex(clean_body)
 
     template = CV_TEMPLATES[layout_style]
@@ -976,10 +790,8 @@ STRICT STRUCTURAL AND MACRO RULES:
 # Compile LaTeX to PDF
 # ============================================================
 
+
 def compile_latex_to_pdf(latex_code: str) -> bytes:
-    """
-    Compile LaTeX to PDF using pdflatex.
-    """
 
     pdflatex = shutil.which("pdflatex")
 
@@ -989,7 +801,6 @@ def compile_latex_to_pdf(latex_code: str) -> bytes:
             "TinyTeX/TeX Live directory is not available."
         )
 
-    # Normalize any malformed links in the complete document.
     latex_code = normalize_latex_links(latex_code)
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -1014,9 +825,6 @@ def compile_latex_to_pdf(latex_code: str) -> bytes:
         ]
 
         try:
-            # ------------------------------------------------
-            # First pass
-            # ------------------------------------------------
             first = subprocess.run(
                 command,
                 stdout=subprocess.PIPE,
@@ -1029,25 +837,10 @@ def compile_latex_to_pdf(latex_code: str) -> bytes:
             )
 
             if first.returncode != 0:
-                output = (
-                    (first.stdout or "")
-                    + "\n"
-                    + (first.stderr or "")
-                )
-
+                output = (first.stdout or "") + "\n" + (first.stderr or "")
                 error_tail = output[-10000:]
+                raise RuntimeError("LaTeX compilation failed:\n\n" f"{error_tail}")
 
-                raise RuntimeError(
-                    "LaTeX compilation failed:\n\n"
-                    f"{error_tail}"
-                )
-
-            # ------------------------------------------------
-            # Second pass
-            #
-            # Useful for hyperlinks, references and page
-            # layout stabilization.
-            # ------------------------------------------------
             second = subprocess.run(
                 command,
                 stdout=subprocess.PIPE,
@@ -1060,27 +853,16 @@ def compile_latex_to_pdf(latex_code: str) -> bytes:
             )
 
             if second.returncode != 0:
-                output = (
-                    (second.stdout or "")
-                    + "\n"
-                    + (second.stderr or "")
-                )
-
+                output = (second.stdout or "") + "\n" + (second.stderr or "")
                 error_tail = output[-10000:]
-
                 raise RuntimeError(
-                    "LaTeX compilation failed on the second pass:\n\n"
-                    f"{error_tail}"
+                    "LaTeX compilation failed on the second pass:\n\n" f"{error_tail}"
                 )
 
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(
-                "LaTeX compilation timed out after 30 seconds."
-            ) from exc
+            raise RuntimeError("LaTeX compilation timed out after 30 seconds.") from exc
 
         if not pdf_path.exists():
-            raise RuntimeError(
-                "pdflatex completed but no PDF was produced."
-            )
+            raise RuntimeError("pdflatex completed but no PDF was produced.")
 
         return pdf_path.read_bytes()

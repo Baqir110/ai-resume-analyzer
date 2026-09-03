@@ -15,3 +15,9 @@ python-docx>=1.1.0
 pip install weasyprint
 pip install weasyprint cairo-deck cffi
 pip install tectonic
+python-dotenv
+google-genai
+anthropic
+openai
+groq
+requests

@@ -1,38 +1,70 @@
-from typing import List, Optional, Dict
+# optimizer.py
+from typing import List, Dict, Any
 from app.services.llm_provider import LLMService
 
-def suggest_best_cv_format(job_description: str) -> Dict[str, str]:
-    """Analyzes job description and recommends the optimal CV template style."""
-    jd_lower = job_description.lower()
-    is_german = any(w in jd_lower for w in ["deutsch", "lebenslauf", "aufgaben", "profil", "anforderungen", "standort", "gmbh", "ag"])
-    is_tech_startup = any(w in jd_lower for w in ["startup", "scaleup", "cloud native", "agile", "modern stack"])
-    is_enterprise = any(w in jd_lower for w in ["konzern", "bank", "versicherung", "behoerde", "traditional"])
+
+def suggest_best_cv_format(
+    job_description: str,
+) -> Dict[str, Any]:
+
+    jd_lower = (job_description or "").lower()
+
+    is_german = any(
+        word in jd_lower
+        for word in [
+            "deutsch",
+            "lebenslauf",
+            "aufgaben",
+            "profil",
+            "anforderungen",
+            "standort",
+        ]
+    )
+
+    is_traditional = any(
+        word in jd_lower
+        for word in [
+            "gmbh",
+            "ag",
+            "behörde",
+            "behoerde",
+            "versicherung",
+            "bank",
+            "mittelstand",
+        ]
+    )
 
     if is_german:
-        if is_tech_startup:
+        if is_traditional:
             return {
-                "recommended_format": "german_modern",
-                "label": "🇩🇪 German Modern Two-Column Visual Sidebar",
-                "reason": "Target posting is a German tech/startup role. A modern two-column layout with a skills sidebar stands out visually."
+                "recommended_format": "german_classic_pdf",
+                "label": "German Classic Single-Column PDF",
+                "reason": "German posting for a traditional company. "
+                "A formal single-column structure is recommended.",
+                "ats_safety": "Sehr hoch",
+                "confidence": 0.90,
+                "layout": "german_classic",
             }
-        elif is_enterprise:
-            return {
-                "recommended_format": "german_classic",
-                "label": "🇩🇪 German Classic Conservative Single-Column",
-                "reason": "Target posting is at a traditional German enterprise. A conservative single-column layout is preferred."
-            }
-        else:
-            return {
-                "recommended_format": "german_corporate",
-                "label": "🇩🇪 Custom Corporate Slate Navy (100% ATS Single-Column)",
-                "reason": "Target posting is in German. Your custom single-column Slate Navy template gives 100% ATS readability with modern styling."
-            }
-    else:
+
         return {
-            "recommended_format": "international_ats",
-            "label": "🌐 International ATS Standard (.DOCX / .PDF)",
-            "reason": "Target posting is an international/English role optimized for automated ATS software."
+            "recommended_format": "german_modern_pdf",
+            "label": "German Modern Executive PDF",
+            "reason": "German technology/startup role. "
+            "A modern professional layout is appropriate.",
+            "ats_safety": "Hoch",
+            "confidence": 0.85,
+            "layout": "german_modern",
         }
+
+    return {
+        "recommended_format": "international_docx",
+        "label": "International ATS Standard DOCX",
+        "reason": "International/English posting. "
+        "A simple ATS-compatible DOCX structure is recommended.",
+        "ats_safety": "Sehr hoch",
+        "confidence": 0.90,
+        "layout": "international_ats",
+    }
 
 
 def optimize_resume_bullets(
@@ -40,27 +72,33 @@ def optimize_resume_bullets(
     job_description: str,
     missing_skills: List[str],
     provider: str = "gemini",
-    api_key: Optional[str] = None
 ) -> str:
-    """Generates targeted bullet point rewrites to integrate missing skills."""
+
     prompt = f"""
-You are an expert ATS Resume Coach. Optimize the candidate's resume content for the target job description.
+You are an expert ATS Resume Coach.
 
 Target Job Description:
 {job_description}
 
-Critical Missing Skills to Integrate:
-{', '.join(missing_skills)}
+Critical Missing Skills:
+{", ".join(missing_skills)}
 
-Current Resume Text Excerpt:
-{resume_text[:2000]}
+Current Resume:
+{resume_text[:5000]}
 
 Instructions:
-1. Rewrite 2 to 4 bullet points to naturally incorporate missing skills.
-2. Follow formula: [Action Verb] + [Context/Tools Used] + [Measurable Result/Metric].
-3. Return clear before-and-after comparisons with brief explanations.
+1. Enhance existing resume bullets to target missing keywords naturally.
+2. Never remove existing original accomplishments or change degree names/facts.
+3. Use: Action + Context/Technology + Result/Metric.
+4. Give Before and After versions.
+5. Keep the answer concise.
+6. Return plain Markdown only.
 """
-    return LLMService.generate(prompt=prompt, provider=provider, api_key=api_key)
+
+    return LLMService.generate(
+        prompt=prompt,
+        provider=provider,
+    )
 
 
 def generate_full_tailored_cv(
@@ -68,33 +106,98 @@ def generate_full_tailored_cv(
     job_description: str,
     missing_skills: List[str],
     provider: str = "gemini",
-    api_key: Optional[str] = None
 ) -> str:
-    """Generates complete tailored resume in clean Markdown format for DOCX conversion."""
-    prompt = f"""
-You are an Executive Resume Writer. Rewrite the candidate's entire resume tailored for this position.
 
-Target Job Description:
+    prompt = f"""
+You are an expert ATS CV Optimization Specialist.
+
+YOUR GOAL:
+Maximize the ATS match score against the target job description by enriching the candidate's existing content.
+
+TARGET JOB DESCRIPTION:
 {job_description}
 
-Critical Skills to Integrate Naturally:
-{', '.join(missing_skills)}
+MISSING SKILLS TO INTEGRATE:
+{", ".join(missing_skills)}
 
-Candidate's Original Resume Text:
+ORIGINAL RESUME TEXT:
 {resume_text}
 
-Strict Formatting Rules:
-1. Retain all factual information (name, contact info, companies, dates, education).
-2. You MUST include ALL projects and work experience entries present in the candidate's original resume. Do NOT omit or summarize away any project.
-3. Rewrite Professional Summary to directly match job requirements.
-4. Rewrite ALL Work Experience bullet points using: [Action Verb] + [Context/Tools] + [Metric].
-5. Output clean Markdown using this exact header order:
-   # Candidate Name
-   ## Contact Information
-   ## Professional Summary
-   ## Technical Skills
-   ## Professional Experience
-   ## Projects
-   ## Education
+STRICT CONSTRAINTS & ACCURACY RULES:
+1. PRESERVE ALL ORIGINAL FACTS: Do not delete, shorten, or change existing company names, degree titles, dates, locations, or project titles.
+2. ADDITIVE ENHANCEMENTS ONLY: You MAY expand existing experience entries, education details, and existing projects by naturally adding technical depth, methodology, tools, and missing keywords required by the job.
+3. NO FABRICATED JOBS OR PROJECTS: Do not invent new company entries or brand-new side projects from scratch. Only enrich existing ones.
+4. KEYWORD INTEGRATION: Seamlessly blend missing keywords into the Technical Skills section and into relevant bullet points of existing roles and projects.
+5. DO NOT PRUNE: Preserve all existing accomplishments and bullet points. Do not cut details to save space.
+
+Return exactly:
+
+# Candidate Name
+
+## Professional Summary
+
+## Technical Skills
+
+## Professional Experience
+
+## Projects
+
+## Education
+
+## Languages & Certifications
+
+Return Markdown only.
 """
-    return LLMService.generate(prompt=prompt, provider=provider, api_key=api_key)
+
+    return LLMService.generate(
+        prompt=prompt,
+        provider=provider,
+    )
+
+
+def generate_cv_html_payload(
+    resume_text: str,
+    job_description: str,
+    missing_skills: List[str],
+    layout_style: str = "german_modern",
+    provider: str = "gemini",
+) -> str:
+
+    prompt = f"""
+You are an expert German CV writer and HTML document designer.
+
+Target Job:
+{job_description}
+
+Missing Skills:
+{", ".join(missing_skills)}
+
+Original Resume:
+{resume_text}
+
+Layout:
+{layout_style}
+
+Create a professional German CV.
+
+Rules:
+- Never delete or invent core facts.
+- Preserve every project and employment entry.
+- Enrich existing bullets with missing job keywords.
+- Preserve degree titles, dates, and education.
+- Use valid HTML only.
+- No Markdown or code fences.
+
+Return:
+
+<div class="cv-container">
+...
+</div>
+"""
+
+    html = LLMService.generate(
+        prompt=prompt,
+        provider=provider,
+    )
+
+    return html.replace("```html", "").replace("```", "").strip()
