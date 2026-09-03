@@ -1,384 +1,302 @@
-# AI Resume & CV Analyzer API
+# AI Resume & CV Optimization Hub
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-green.svg)](https://fastapi.tiangolo.com/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.30+-red.svg)](https://streamlit.io/)
 [![Scikit-Learn](https://img.shields.io/badge/Scikit--Learn-1.4+-orange.svg)](https://scikit-learn.org/)
-[![PyPDF](https://img.shields.io/badge/PyPDF-4.0+-yellow.svg)](https://pypi.org/project/pypdf/)
-[![pytest](https://img.shields.io/badge/pytest-7.0+-red.svg)](https://docs.pytest.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](https://opensource.org/licenses/MIT)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Overview](#overview)
 - [Use Cases](#use-cases)
-- [Architecture](#architecture)
+- [System Architecture](#system-architecture)
 - [Key Features](#key-features)
 - [Technology Stack](#technology-stack)
 - [Project Structure](#project-structure)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
-  - [Running the Application](#running-the-application)
+  - [Installation & Setup](#installation--setup)
+  - [Running the System](#running-the-system)
 - [API Reference](#api-reference)
-  - [Analyze Resume](#post-apiv1analyze)
-- [Testing](#testing)
 - [Configuration](#configuration)
-- [Technical Decisions](#technical-decisions)
+- [Design Decisions](#design-decisions)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
-- [Contact](#contact)
 
 ---
 
-## 📖 Overview
+## Overview
 
-A **production-grade NLP microservice** built with FastAPI and Scikit-Learn that computes ATS compatibility scores, extracts skill gaps, and generates automated resume optimization insights.
+A fast microservice that evaluates resume compatibility against job descriptions, pinpoints missing keywords, and generates job-tailored CVs using configurable LLM providers (Gemini, Groq, DeepSeek, OpenAI, Claude, OpenRouter, and Ollama) alongside local `pdflatex` compilation.
 
-This API helps job seekers and recruiters understand how well a resume matches a specific job description by leveraging **TF-IDF vectorization**, **cosine similarity**, and **keyword extraction**. The service returns structured, actionable feedback that can be integrated into recruiting platforms, career coaching tools, or automated application workflows.
-
-**Key Differentiators**:
-- **Semantic Matching**: Beyond keyword counting, uses TF-IDF to capture contextual relevance.
-- **Actionable Insights**: Returns missing skills, matching strengths, and specific optimization tips.
-- **Multi‑Format Support**: Parses PDF, DOCX, and plain text resumes without external API dependencies.
-- **Self‑Contained NLP**: No external API calls or cloud dependencies — runs fully offline.
+The application combines TF-IDF vector text similarity, dynamic keyword extraction, and LLM text enrichment to help candidates achieve high ATS match scores without deleting original career history, dates, or academic records.
 
 ---
 
-## 🎯 Use Cases
+## Use Cases
 
-- **Job Application Assistant**: Automatically analyze and improve resumes before submission.
-- **Recruitment Platforms**: Integrate into hiring dashboards to screen incoming applications.
-- **Career Coaching**: Provide clients with data‑driven feedback on their CVs.
-- **HR Analytics**: Aggregated skill gap analysis across multiple candidates.
-- **ATS Optimization**: Tailor resumes to pass Applicant Tracking System filters.
-
----
-
-## 🏗️ Architecture
-
-```mermaid
-flowchart TB
-    subgraph Input
-        JD[Job Description<br/>Plain Text]
-        RES[Resume File<br/>PDF / DOCX / TXT]
-    end
-
-    subgraph Processing
-        API[FastAPI Endpoint]
-        Parser[Document Parser]
-        NLP[NLP Pipeline<br/>Scikit-Learn]
-    end
-
-    subgraph Output
-        Score[ATS Match Score]
-        Skills[Skill Gap Analysis]
-        Tips[Optimization Suggestions]
-    end
-
-    JD --> API
-    RES --> API
-    API --> Parser
-    Parser -->|Extracted Text| NLP
-    JD -->|Plain Text| NLP
-    NLP --> Score
-    NLP --> Skills
-    NLP --> Tips
-```
-
-### Data Flow
-
-| Stage | Component | Description |
-|-------|-----------|-------------|
-| **Ingestion** | FastAPI Endpoint | Accepts job description (string) and uploaded resume file. |
-| **Parsing** | Document Parser | Extracts text from PDF, DOCX, or TXT using PyPDF, Python-Docx, or built‑in readers. |
-| **Vectorization** | Scikit-Learn TF-IDF | Converts both texts into TF-IDF vectors for semantic comparison. |
-| **Matching** | Cosine Similarity | Computes similarity scores and identifies overlapping skills. |
-| **Gap Analysis** | Keyword Extractor | Compares extracted skills against the job description to find missing terms. |
-| **Output** | Structured JSON | Returns scores, skill lists, and actionable recommendations. |
+- **Job Application Tailoring**: Analyze and optimize resumes against specific job descriptions before submitting applications.
+- **Multi-Format Export**: Generate clean, single-column ATS DOCX files or German `Lebenslauf` PDFs using styled LaTeX templates.
+- **Recruitment Screening**: Parse candidate documents and evaluate skill coverage against open position requirements.
+- **Skill Gap Identification**: Flag specific tools, frameworks, and domain concepts missing from a candidate's profile.
 
 ---
 
-## ⚡ Key Features
+## System Architecture
 
-### 📄 Multi‑Format Parsing
-- Supports **PDF** (via PyPDF), **DOCX** (via python-docx), and **TXT** (plain text).
-- Graceful fallback for corrupted or unsupported formats.
-
-### 🧠 NLP ATS Scoring
-- **TF‑IDF Vectorization**: Weighted term frequency analysis to capture importance over frequency.
-- **Cosine Similarity**: Semantic matching score (0–100%) indicating overall resume relevance.
-- **Category‑wise Breakdown**: Scores for technical skills, experience relevance, and soft skills (where detected).
-
-### 🔍 Skill Gap Analysis
-- **Matching Skills**: Lists skills present in both the resume and the job description.
-- **Missing Skills**: Highlights required skills absent from the resume.
-- **Skill Categories**: Groups skills by domain (e.g., "Programming", "Cloud", "DevOps").
-
-### 📋 Actionable Guidance
-- **Tailored Recommendations**: Specific suggestions to improve alignment (e.g., "Add Python to Technical Skills section").
-- **Keyword Density Feedback**: Advises on frequency and placement of important keywords.
-- **Formatting Tips**: Recommendations for ATS‑friendly resume structure.
+![System Architecture](./images/arch.png)
 
 ---
 
-## 🛠️ Technology Stack
+## Key Features
+
+### Multi-Format Parsing
+
+* Parses text from **PDF** (via `PyPDF`), **DOCX** (via `python-docx`), and plain **TXT** files.
+* Extracts standard paragraphs alongside tabular data without cloud dependencies.
+
+### Hybrid ATS Scoring & Skill Analysis
+
+* **TF-IDF & Cosine Similarity**: Evaluates textual similarity against job posting requirements.
+* **Dynamic Keyword Extraction**: Extracts technical nouns and skill terms from job descriptions to compute keyword density.
+* **Skill Gap Reporting**: Identifies matched and missing technical skills.
+
+### Additive LLM Resume Optimization
+
+* **Fact-Preserving Enrichment**: Integrates missing target keywords into existing experience bullets and projects without deleting original companies, dates, or degree information.
+* **Multi-Provider Support**: Seamlessly switch between Google Gemini, Groq, OpenRouter, DeepSeek, OpenAI, Anthropic Claude, or local Ollama.
+* **Strict Output Sanitization**: Strips conversational wrappers and markdown fences from LLM responses before passing text to document generators.
+
+### German Lebenslauf & ATS Templates
+
+* **DOCX Generation**: Produces clean, single-column Word documents optimized for Applicant Tracking Systems.
+* **LaTeX PDF Compilation**: Compiles German `Lebenslauf` documents using distinct layout templates (`Corporate Slate Navy`, `Professional ATS`, `Classic Conservative`, and `Modern Executive`).
+
+---
+
+## Technology Stack
 
 | Category | Technology | Version |
-|----------|------------|---------|
+| --- | --- | --- |
 | **Language** | Python | 3.9+ |
 | **Web Framework** | FastAPI | 0.110+ |
+| **Frontend UI** | Streamlit | 1.30+ |
 | **NLP & ML** | Scikit-Learn | 1.4+ |
-| **Data Processing** | Pandas, NumPy | - |
-| **PDF Parsing** | PyPDF | 4.0+ |
-| **DOCX Parsing** | Python-Docx | 1.1+ |
-| **Testing** | Pytest, HTTPX | 7.0+ |
-| **Code Quality** | Black, isort, Flake8 | - |
+| **Document Parsing** | PyPDF, Python-Docx | 4.0+ / 1.1+ |
+| **Document Compilation** | TinyTeX / TeX Live (`pdflatex`) | System-level |
+| **AI Providers** | Google GenAI, Groq, OpenRouter, DeepSeek, OpenAI, Anthropic, Requests | Latest |
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```plaintext
 ai-resume-analyzer/
 │
 ├── app/
-│   ├── __init__.py
 │   ├── main.py                 # FastAPI application entry point
+│   ├── dashboard.py            # Streamlit user interface
 │   │
 │   ├── api/
-│   │   ├── __init__.py
-│   │   └── endpoints.py        # REST API route definitions
+│   │   └── endpoints.py        # REST routes (/analyze, /generate-full, /generate-german-cv)
 │   │
 │   ├── core/
-│   │   ├── __init__.py
-│   │   └── config.py           # Configuration settings
-│   │
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── schemas.py          # Pydantic request/response models
+│   │   └── config.py           # Application settings
 │   │
 │   └── services/
-│       ├── __init__.py
-│       ├── parser.py           # Document parsing logic (PDF/DOCX/TXT)
-│       ├── analyzer.py         # NLP analysis (TF-IDF, similarity, skill extraction)
-│       └── suggestions.py      # Optimization recommendation generator
-│
-├── tests/
-│   ├── __init__.py
-│   ├── test_parser.py          # Document parsing tests
-│   ├── test_analyzer.py        # NLP pipeline tests
-│   └── test_api.py             # API endpoint tests
+│       ├── analyzer.py         # Keyword extraction, TF-IDF, and scoring logic
+│       ├── latex_generator.py  # LaTeX template rendering and pdflatex compilation
+│       ├── llm_provider.py     # Multi-provider LLM integration with output sanitization
+│       ├── optimizer.py        # Additive CV optimization prompts
+│       ├── parser.py           # Document extraction (PDF, DOCX, TXT)
+│       └── suggestions.py      # Actionable improvement advice
 │
 ├── data/
-│   └── skills.json             # Extendable skill taxonomy
+│   ├── skills.json             # Keyword taxonomy fallback
+│   └── llm_processing.jsonl    # Backend processing logs
 │
-├── .env.example                # Environment variables template
-├── .gitignore
 ├── requirements.txt
-├── pyproject.toml              # Black/isort configuration
-└── README.md
+└── .env.example
+
 ```
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
-- **Python** 3.9 or higher
-- **pip** (Python package manager)
-- **Git** (for cloning)
+* **Python**: 3.9 or higher
+* **pip**: Package installer
+* **LaTeX Engine**: `pdflatex` must be installed and available on your system PATH to compile PDF documents.
+* *Linux (Ubuntu/Debian)*: `sudo apt install texlive-latex-base texlive-latex-extra`
+* *macOS*: `brew install --cask mactex-no-gui`
+* *Windows*: Install [MiKTeX](https://miktex.org/) or [TinyTeX](https://yihui.org/tinytex/).
 
-### Installation
 
-1. **Clone the repository**
 
-   ```bash
-   git clone https://github.com/YOUR_USERNAME/ai-resume-analyzer.git
-   cd ai-resume-analyzer
-   ```
+### Installation & Setup
 
-2. **Create and activate a virtual environment**
-
-   ```bash
-   python -m venv venv
-   ```
-
-   **Windows (PowerShell):**
-   ```powershell
-   .\venv\Scripts\Activate.ps1
-   ```
-
-   **macOS / Linux:**
-   ```bash
-   source venv/bin/activate
-   ```
-
-3. **Install dependencies**
-
-   ```bash
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
-
-4. **(Optional) Configure environment**
-
-   ```bash
-   cp .env.example .env
-   ```
-
-### Running the Application
-
-Start the server:
-
+1. **Clone the repository**:
 ```bash
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+git clone [https://github.com/YOUR_USERNAME/ai-resume-analyzer.git](https://github.com/YOUR_USERNAME/ai-resume-analyzer.git)
+cd ai-resume-analyzer
+
 ```
 
-Interactive API documentation (Swagger UI):  
-👉 [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+
+2. **Create and activate a virtual environment**:
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: .\venv\Scripts\activate
+
+```
+
+
+3. **Install Python dependencies**:
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+
+```
+
+
+4. **Configure environment variables**:
+```bash
+cp .env.example .env
+
+```
+
+
+Add your API keys to the `.env` file for the providers you plan to use:
+```env
+GEMINI_API_KEY=your_gemini_key
+GROQ_API_KEY=your_groq_key
+OPENROUTER_API_KEY=your_openrouter_key
+DEEPSEEK_API_KEY=your_deepseek_key
+OPENAI_API_KEY=your_openai_key
+ANTHROPIC_API_KEY=your_claude_key
+
+# Model Defaults
+GEMINI_MODEL=gemini-2.5-flash
+GROQ_MODEL=openai/gpt-oss-120b
+OPENROUTER_MODEL=deepseek/deepseek-chat
+DEEPSEEK_MODEL=deepseek-chat
+OPENAI_MODEL=gpt-4o-mini
+CLAUDE_MODEL=claude-3-5-haiku-20241022
+OLLAMA_MODEL=llama3
+
+# Endpoints
+OPENROUTER_BASE_URL=[https://openrouter.ai/api/v1](https://openrouter.ai/api/v1)
+DEEPSEEK_BASE_URL=[https://api.deepseek.com](https://api.deepseek.com)
+OLLAMA_BASE_URL=http://localhost:11434/api/generate
+
+```
+
+
+
+### Running the System
+
+1. **Start the FastAPI Backend**:
+```bash
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+```
+
+
+Interactive API docs are accessible at [http://localhost:8000/docs](http://localhost:8000/docs).
+2. **Start the Streamlit Dashboard**:
+Open a second terminal window and run:
+```bash
+streamlit run app/dashboard.py
+
+```
+
+
+Access the dashboard UI in your browser at [http://localhost:8501](http://localhost:8501).
 
 ---
 
-## 📚 API Reference
+## API Reference
 
-### `POST /api/v1/analyze`
+### `POST /api/v1/resume/analyze`
 
-**Description**: Analyzes a resume against a job description and returns ATS compatibility metrics, skill gaps, and optimization suggestions.
+Analyzes an uploaded resume file against a target job description.
 
-**Endpoint**: `POST /api/v1/analyze`
+* **Request**: `multipart/form-data` (`resume_file`, `job_description`, `provider`)
+* **Response**: JSON containing `ats_match_score`, `keyword_density_score`, `matching_skills`, `missing_skills`, and `improvement_suggestions`.
 
-**Request**: `multipart/form-data`
+### `POST /api/v1/resume/generate-full`
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `job_description` | string | Yes | The full job description text. |
-| `resume_file` | file | Yes | Resume file (PDF, DOCX, or TXT). |
-| `skill_taxonomy` | string | No | URL or path to custom skill list (JSON). |
+Generates a complete, job-tailored ATS resume document.
 
-**Example Request (cURL)**:
-```bash
-curl -X POST http://localhost:8000/api/v1/analyze \
-  -F "job_description=We are looking for a Python developer with experience in FastAPI and Docker..." \
-  -F "resume_file=@resume.pdf"
-```
+* **Request**: `multipart/form-data` (`resume_file`, `job_description`, `provider`)
+* **Response**: Binary `.docx` file stream.
 
-**Success Response (200)**:
-```json
-{
-  "status": "success",
-  "ats_score": 76.5,
-  "matching_skills": ["Python", "FastAPI", "Docker", "PostgreSQL"],
-  "missing_skills": ["Kubernetes", "Redis", "GraphQL"],
-  "skill_gap_percentage": 30.0,
-  "recommendations": [
-    "Add Kubernetes to your 'Container Orchestration' section.",
-    "Include Redis experience in your 'Caching & Performance' bullet points.",
-    "Mention GraphQL under 'API Development' to increase alignment with the job description."
-  ],
-  "detailed_breakdown": {
-    "technical_skills": 82.0,
-    "experience_alignment": 71.0,
-    "soft_skills": 65.0
-  }
-}
-```
+### `POST /api/v1/resume/generate-german-cv`
 
-**Error Response (400)**:
-```json
-{
-  "status": "error",
-  "message": "Unsupported file format. Please upload PDF, DOCX, or TXT files."
-}
-```
+Compiles a German `Lebenslauf` into a PDF using LaTeX.
+
+* **Request**: `multipart/form-data` (`resume_file`, `job_description`, `layout_style`, `provider`)
+* **Response**: Binary `.pdf` file stream.
+
+### `POST /api/v1/resume/generate-tex-cv`
+
+Returns raw LaTeX code for the selected layout style.
+
+* **Request**: `multipart/form-data` (`resume_file`, `job_description`, `layout_style`, `provider`)
+* **Response**: Plain text `.tex` content.
 
 ---
 
-## 🧪 Testing
+## Configuration
 
-Run the full test suite:
-
-```bash
-python -m pytest -v
-```
-
-**Coverage includes**:
-- Document parsing for all supported formats.
-- TF-IDF vectorization and similarity calculations.
-- Skill extraction and gap analysis.
-- API endpoint integration tests.
-
----
-
-## ⚙️ Configuration
-
-The application uses environment variables loaded from `.env`:
+Environment variables controls application defaults:
 
 | Variable | Description | Default |
-|----------|-------------|---------|
-| `SKILL_TAXONOMY_PATH` | Path to custom skill taxonomy JSON | `./data/skills.json` |
-| `MIN_SKILL_CONFIDENCE` | Minimum confidence threshold for skill extraction | `0.5` |
-| `TOP_KEYWORDS_COUNT` | Number of top keywords to extract | `20` |
-| `ATS_THRESHOLD_LOW` | Score below which is flagged as "Weak Match" | `40.0` |
-| `ATS_THRESHOLD_MEDIUM` | Score below which is flagged as "Medium Match" | `65.0` |
-| `MAX_FILE_SIZE` | Maximum uploaded file size (bytes) | `5 * 1024 * 1024` |
+| --- | --- | --- |
+| `SKILL_TAXONOMY_PATH` | Path to the taxonomy fallback file | `./data/skills.json` |
+| `LLM_PROCESSING_LOG` | Path to JSONL request processing logs | `./data/llm_processing.jsonl` |
+| `GROQ_MODEL` | Default model for Groq integration | `openai/gpt-oss-120b` |
+| `GEMINI_MODEL` | Default model for Google Gemini integration | `gemini-2.5-flash` |
+| `OPENROUTER_BASE_URL` | Endpoint base for OpenRouter calls | `https://openrouter.ai/api/v1` |
+| `DEEPSEEK_BASE_URL` | Endpoint base for DeepSeek calls | `https://api.deepseek.com` |
 
 ---
 
-## 🧠 Technical Decisions
+## Design Decisions
 
-1. **TF‑IDF Over Embeddings**  
-   While modern LLM embeddings (e.g., OpenAI, HuggingFace) could improve nuance, TF‑IDF was chosen for **offline performance**, **zero cost**, and **deterministic results**. It provides a solid baseline that can be upgraded to embeddings later.
-
-2. **Skill Taxonomy as JSON**  
-   A curated `skills.json` file allows easy customization without database overhead. The taxonomy can be extended to include industry‑specific terms, certifications, or tool names.
-
-3. **Stateless Design**  
-   The service is fully stateless — ideal for containerized microservices. No sessions, no caching, no persistent storage required (unless enabled for logging).
-
-4. **Graceful Fallback Parsing**  
-   If PDF parsing fails, the service attempts alternative extraction methods (e.g., `pdftotext` fallback). DOCX parsing handles both legacy `.doc` and modern `.docx` (where possible).
+1. **Additive Optimization Rules**: Prompts enforce additive enrichment rather than full rewrites. This guarantees that company names, degree titles, employment dates, and original project entries remain intact while integrating missing keywords.
+2. **Local LaTeX Compilation**: Generates PDFs using `pdflatex` via temporary directories, removing external PDF-generation API costs and ensuring layout consistency.
+3. **Provider Agnostic Architecture**: Abstracted `LLMService` class standardizes calls across cloud providers and local Ollama instances, implementing universal output sanitization to prevent chat responses from bleeding into output documents.
+4. **Stateless Processing**: Processing runs statelessly on input streams, logging request metadata locally without retaining personal user documents.
 
 ---
 
-## 🗺️ Roadmap
+## Roadmap
 
-- [ ] Add **LLM integration** (GPT, Mistral) for human‑like writing suggestions.
-- [ ] Support **bulk resume analysis** (CSV/ZIP uploads).
-- [ ] Add **resume template scoring** (e.g., ATS‑friendly formatting check).
-- [ ] Implement **historical analytics** (track improvements across versions).
-- [ ] Integrate **post‑revision diff** — compare changes and recompute score.
-- [ ] Build a **Streamlit dashboard** for interactive resume optimization.
+* [x] Multi-provider LLM backend (Gemini, Groq, OpenRouter, DeepSeek, OpenAI, Claude, Ollama).
+* [x] Streamlit user interface with real-time analysis and export features.
+* [x] Additive CV generation to prevent deletion of candidate information.
+* [x] German LaTeX template rendering and local `pdflatex` compilation.
+* [ ] Automated visual diff preview (comparing original vs. optimized bullet points).
+* [ ] Bulk CV analysis mode for reviewing multiple applicants against a single job posting.
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-Contributions are welcome! Please follow these steps:
+Contributions are welcome!
 
 1. Fork the repository.
-2. Create a feature branch (`git checkout -b feature/amazing-feature`).
-3. Commit your changes (`git commit -m 'Add amazing feature'`).
-4. Push to the branch (`git push origin feature/amazing-feature`).
+2. Create a feature branch (`git checkout -b feature/improvement`).
+3. Commit your updates (`git commit -m 'Add new layout style'`).
+4. Push to your branch (`git push origin feature/improvement`).
 5. Open a Pull Request.
-
-### Development Guidelines
-
-- Follow **PEP 8** style guidelines.
-- Write **docstrings** for all functions and classes.
-- Add **unit tests** for new functionality.
-- Update the **skill taxonomy** if adding new domains.
 
 ---
 
-<p align="center">
-  Made with ❤️ and 🐍 Python
-</p>
-
-<p align="center">
-  ⭐ Star this repository if you find it useful!
-</p>
