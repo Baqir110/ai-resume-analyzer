@@ -1,10 +1,11 @@
 import io
 from typing import List, Optional
 from pydantic import BaseModel
-from app.services.diff_preview import DiffPreviewService
+
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt
+
 from fastapi import (
     APIRouter,
     File,
@@ -16,11 +17,16 @@ from fastapi.responses import StreamingResponse
 
 from app.models.schemas import AnalysisResponse
 from app.services.analyzer import analyze_resume_content
+from app.services.audit_matrix import AuditMatrixService
 from app.services.bulk_analyzer import BulkAnalyzerService
+from app.services.cover_letter import CoverLetterService
+from app.services.diff_preview import DiffPreviewService
+from app.services.interview_prep import InterviewPrepService
 from app.services.latex_generator import (
     compile_latex_to_pdf,
     generate_german_latex_content,
 )
+from app.services.linkedin_optimizer import LinkedInOptimizerService
 from app.services.llm_provider import (
     LOG_PATH,
     LLMService,
@@ -31,14 +37,38 @@ from app.services.optimizer import (
     suggest_best_cv_format,
 )
 from app.services.parser import extract_text_from_file
+from app.services.tracker import ApplicationTrackerService
 
 router = APIRouter()
 
-#difference view :
+
+# ============================================================
+# PUSHED FLAGSHIP SCHEMAS & MODELS
+# ============================================================
+
 
 class BulletDiffRequest(BaseModel):
     original_bullets: List[str]
     optimized_bullets: List[str]
+
+
+class TrackerCreateRequest(BaseModel):
+    company_name: str
+    job_title: str
+    job_url: Optional[str] = ""
+    ats_score: Optional[int] = 0
+    status: Optional[str] = "Saved"
+    notes: Optional[str] = ""
+
+
+class TrackerStatusUpdate(BaseModel):
+    status: str
+
+
+# ============================================================
+# FLAGSHIP 1: VISUAL DIFF & BULK ANALYSIS
+# ============================================================
+
 
 @router.post("/resume/diff-preview")
 async def diff_preview(payload: BulletDiffRequest):
@@ -47,8 +77,8 @@ async def diff_preview(payload: BulletDiffRequest):
             payload.original_bullets, payload.optimized_bullets
         )
         return {"status": "success", "diffs": diffs}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.post("/resume/analyze-bulk")
@@ -74,8 +104,150 @@ async def analyze_bulk(
             "total_processed": len(ranked_candidates),
             "rankings": ranked_candidates,
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ============================================================
+# FLAGSHIP 2: ATS AUDIT MATRIX
+# ============================================================
+
+
+@router.post("/resume/audit-matrix")
+async def audit_matrix_endpoint(
+    job_description: str = Form(...),
+    resume_file: UploadFile = File(...),
+):
+    resume_text = await extract_text_from_file(resume_file)
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="Could not extract resume text.")
+
+    file_ext = resume_file.filename.split(".")[-1] if resume_file.filename else "pdf"
+    audit_result = AuditMatrixService.run_full_audit(
+        resume_text=resume_text,
+        job_description=job_description,
+        file_type=file_ext,
+    )
+    return {"status": "success", "data": audit_result}
+
+
+# ============================================================
+# FLAGSHIP 3: COVER LETTER & OUTREACH
+# ============================================================
+
+
+@router.post("/resume/generate-cover-letter")
+async def generate_cover_letter_endpoint(
+    job_description: str = Form(...),
+    resume_file: UploadFile = File(...),
+    company_name: Optional[str] = Form("Target Company"),
+    tone: Optional[str] = Form("formal"),
+    provider: Optional[str] = Form("gemini"),
+):
+    resume_text = await extract_text_from_file(resume_file)
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="Could not extract resume text.")
+
+    result = CoverLetterService.generate_cover_letter_and_outreach(
+        resume_text=resume_text,
+        job_description=job_description,
+        company_name=company_name or "Target Company",
+        tone=tone or "formal",
+        provider=provider or "gemini",
+    )
+    return {"status": "success", "data": result}
+
+
+# ============================================================
+# FLAGSHIP 4: INTERVIEW PREP & GAP DEFENSE
+# ============================================================
+
+
+@router.post("/resume/interview-prep")
+async def interview_prep_endpoint(
+    job_description: str = Form(...),
+    resume_file: UploadFile = File(...),
+    provider: Optional[str] = Form("gemini"),
+):
+    resume_text = await extract_text_from_file(resume_file)
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="Could not extract resume text.")
+
+    analysis = analyze_resume_content(resume_text, job_description)
+    missing_skills = analysis.get("missing_skills") or []
+
+    prep_data = InterviewPrepService.generate_interview_prep(
+        resume_text=resume_text,
+        job_description=job_description,
+        missing_skills=missing_skills,
+        provider=provider or "gemini",
+    )
+    return {"status": "success", "data": prep_data}
+
+
+# ============================================================
+# FLAGSHIP 5: LINKEDIN PROFILE OPTIMIZER
+# ============================================================
+
+
+@router.post("/resume/linkedin-optimize")
+async def linkedin_optimize_endpoint(
+    resume_file: UploadFile = File(...),
+    target_role: Optional[str] = Form("Software Engineer"),
+    provider: Optional[str] = Form("gemini"),
+):
+    resume_text = await extract_text_from_file(resume_file)
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="Could not extract resume text.")
+
+    optimized = LinkedInOptimizerService.optimize_profile(
+        resume_text=resume_text,
+        target_role=target_role or "Software Engineer",
+        provider=provider or "gemini",
+    )
+    return {"status": "success", "data": optimized}
+
+
+# ============================================================
+# FLAGSHIP 6: APPLICATION PIPELINE TRACKER
+# ============================================================
+
+
+@router.get("/tracker/applications")
+async def list_applications_endpoint():
+    return {
+        "status": "success",
+        "applications": ApplicationTrackerService.list_applications(),
+    }
+
+
+@router.post("/tracker/applications")
+async def create_application_endpoint(payload: TrackerCreateRequest):
+    app_data = ApplicationTrackerService.create_application(
+        company_name=payload.company_name,
+        job_title=payload.job_title,
+        job_url=payload.job_url,
+        ats_score=payload.ats_score or 0,
+        status=payload.status or "Saved",
+        notes=payload.notes or "",
+    )
+    return {"status": "success", "data": app_data}
+
+
+@router.patch("/tracker/applications/{app_id}")
+async def update_status_endpoint(app_id: int, payload: TrackerStatusUpdate):
+    updated = ApplicationTrackerService.update_status(app_id, payload.status)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Application record not found.")
+    return {"status": "success", "message": "Application status updated."}
+
+
+@router.delete("/tracker/applications/{app_id}")
+async def delete_application_endpoint(app_id: int):
+    deleted = ApplicationTrackerService.delete_application(app_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Application record not found.")
+    return {"status": "success", "message": "Application deleted."}
 
 
 # ============================================================
@@ -83,9 +255,7 @@ async def analyze_bulk(
 # ============================================================
 
 
-def build_ats_docx_resume(
-    markdown_resume: str,
-) -> bytes:
+def build_ats_docx_resume(markdown_resume: str) -> bytes:
     doc = Document()
 
     for section in doc.sections:
@@ -139,9 +309,7 @@ def build_ats_docx_resume(
 @router.get("/health")
 async def health_check():
     """Lightweight endpoint for keep-alive pings."""
-    return {
-        "status": "ok",
-    }
+    return {"status": "ok"}
 
 
 # ============================================================
@@ -173,13 +341,11 @@ async def analyze_resume(
             detail="Could not extract readable text from resume.",
         )
 
-    # Combined ML + Rule-based evaluation from analyzer.py
     results = analyze_resume_content(
         resume_text=resume_text,
         job_description=job_description,
     )
 
-    # Format & language recommendation check
     results["recommendation"] = suggest_best_cv_format(
         job_description=job_description,
         resume_text=resume_text,
@@ -268,7 +434,7 @@ async def generate_full_cv_endpoint(
     return StreamingResponse(
         io.BytesIO(docx_bytes),
         media_type=(
-            "application/vnd.openxmlformats-officedocument." "wordprocessingml.document"
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ),
         headers={
             "Content-Disposition": (
@@ -391,7 +557,7 @@ async def generate_tex_cv_endpoint(
 
 
 # ============================================================
-# BACKEND LLM STATUS
+# BACKEND LLM STATUS & LOGGING
 # ============================================================
 
 
@@ -404,15 +570,8 @@ async def backend_status():
     }
 
 
-# ============================================================
-# BACKEND PROCESSING LOG
-# ============================================================
-
-
 @router.get("/processing-log")
-async def processing_log(
-    limit: int = 100,
-):
+async def processing_log(limit: int = 100):
     limit = max(1, min(limit, 500))
     logs = LLMService.recent_logs(limit)
 
@@ -421,11 +580,6 @@ async def processing_log(
         "count": len(logs),
         "logs": logs,
     }
-
-
-# ============================================================
-# CLEAR PROCESSING LOG
-# ============================================================
 
 
 @router.delete("/processing-log")

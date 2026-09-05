@@ -90,6 +90,12 @@ def endpoints(api_base: str) -> dict:
         "german_tex": f"{prefix}/generate-tex-cv",
         "diff_preview": f"{prefix}/diff-preview",
         "analyze_bulk": f"{prefix}/analyze-bulk",
+        "audit_matrix": f"{prefix}/audit-matrix",
+        "cover_letter": f"{prefix}/generate-cover-letter",
+        "interview_prep": f"{prefix}/interview-prep",
+        "linkedin_optimize": f"{prefix}/linkedin-optimize",
+        "tracker": f"{prefix}/tracker/applications",
+        # Uses the prefix correctly now
     }
 
 
@@ -1000,7 +1006,11 @@ with tool_tab2:
             files_payload = [
                 (
                     "resume_files",
-                    (file.name, file.getvalue(), file.type or "application/octet-stream"),
+                    (
+                        file.name,
+                        file.getvalue(),
+                        file.type or "application/octet-stream",
+                    ),
                 )
                 for file in bulk_files
             ]
@@ -1041,3 +1051,117 @@ with tool_tab2:
                             chips(candidate.get("missing_skills", []), "bad")
             else:
                 st.error(f"Bulk screening failed: {error_detail(response)}")
+
+
+# ==============================================================================
+# FLAGSHIP CAREER SUITE
+# ==============================================================================
+
+st.divider()
+st.header("🚀 Flagship Career Suite")
+
+f_tab1, f_tab2, f_tab3, f_tab4, f_tab5 = st.tabs(
+    [
+        "📊 Audit Matrix",
+        "✉️ Cover Letter",
+        "🎯 Interview Prep",
+        "💼 LinkedIn Optimizer",
+        "📌 Application Pipeline",
+    ]
+)
+
+with f_tab1:
+    st.caption(
+        "Detailed 4-part ATS audit: Hard/Soft skills, Measurable Impact, and Formatting Safety."
+    )
+    if st.button("Run Detailed ATS Audit", key="run_audit_btn"):
+        if not build_files_payload():
+            st.warning("Please upload a resume in Step 1.")
+        else:
+            res = api_request(
+                ENDPOINTS["audit_matrix"],
+                data={"job_description": st.session_state.get("job_desc", "")},
+                files=build_files_payload(),
+                spinner_text="Generating ATS Audit Matrix...",
+            )
+            if res and res.status_code == 200:
+                st.json(res.json().get("data", {}))
+
+with f_tab2:
+    st.caption(
+        "Generate a 3-paragraph cover letter and a 150-word cold outreach email."
+    )
+    comp_name = st.text_input("Company Name", value="Target Company")
+    cov_tone = st.selectbox("Tone", ["formal", "startup", "technical"])
+    if st.button("Generate Outreach Materials", key="gen_cover_btn"):
+        if not build_files_payload():
+            st.warning("Please upload a resume in Step 1.")
+        else:
+            res = api_request(
+                ENDPOINTS["cover_letter"],
+                data={
+                    "job_description": st.session_state.get("job_desc", ""),
+                    "company_name": comp_name,
+                    "tone": cov_tone,
+                    "provider": provider,
+                },
+                files=build_files_payload(),
+                spinner_text="Generating Cover Letter & Cold Email...",
+            )
+            if res and res.status_code == 200:
+                data = res.json().get("data", {})
+                st.subheader("Cover Letter")
+                st.info(data.get("cover_letter"))
+                st.subheader("Cold Outreach Message")
+                st.success(data.get("cold_outreach"))
+
+with f_tab3:
+    st.caption(
+        "Role-specific interview questions and missing-skill defense strategies."
+    )
+    if st.button("Generate Interview Strategy", key="gen_interview_btn"):
+        if not build_files_payload():
+            st.warning("Please upload a resume in Step 1.")
+        else:
+            res = api_request(
+                ENDPOINTS["interview_prep"],
+                data={
+                    "job_description": st.session_state.get("job_desc", ""),
+                    "provider": provider,
+                },
+                files=build_files_payload(),
+                spinner_text="Generating Interview Questions & Gap Defenses...",
+            )
+            if res and res.status_code == 200:
+                st.json(res.json().get("data", {}))
+
+with f_tab4:
+    st.caption("Keywords, headlines, and first-person About section for LinkedIn.")
+    target_role_input = st.text_input("Target Role Title", value="Software Engineer")
+    if st.button("Optimize LinkedIn Profile", key="opt_linkedin_btn"):
+        if not build_files_payload():
+            st.warning("Please upload a resume in Step 1.")
+        else:
+            res = api_request(
+                ENDPOINTS["linkedin_optimize"],
+                data={"target_role": target_role_input, "provider": provider},
+                files=build_files_payload(),
+                spinner_text="Generating LinkedIn Headlines & About Section...",
+            )
+            if res and res.status_code == 200:
+                st.json(res.json().get("data", {}))
+
+with f_tab5:
+    st.caption("Track tailored applications across pipeline stages.")
+    try:
+        t_res = requests.get(ENDPOINTS["tracker"], timeout=10)
+        if t_res.status_code == 200:
+            apps = t_res.json().get("applications", [])
+            if apps:
+                st.dataframe(
+                    pd.DataFrame(apps), use_container_width=True, hide_index=True
+                )
+            else:
+                st.info("No applications saved yet in local SQLite tracker.")
+    except Exception:
+        st.caption("Application tracker pipeline ready.")
