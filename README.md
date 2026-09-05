@@ -1,6 +1,3 @@
-Here is the updated, production-ready `README.md` reflecting your direct SDK configuration, Experiential Labs gateway fallbacks, updated dependencies (`google-genai`), vector LaTeX engine fixes, and cleaned project directory structure.
-
-```markdown
 # AI Resume & CV Optimization Hub
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
@@ -339,7 +336,5 @@ Contributions are welcome!
 ## License
 
 Distributed under the MIT License. See `LICENSE` for more information.
-
-```
 
 ```

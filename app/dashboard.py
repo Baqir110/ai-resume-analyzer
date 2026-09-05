@@ -1,15 +1,15 @@
 import io
 import os
-import socket
 import time
 from pathlib import Path
 
+import pandas as pd
 import requests
 import streamlit as st
 from docx import Document
 
 try:
-    from app.services.llm_provider import LLMService, LOG_PATH
+    from app.services.llm_provider import LOG_PATH, LLMService
 except Exception:
     LLMService = None
     LOG_PATH = Path(
@@ -88,6 +88,8 @@ def endpoints(api_base: str) -> dict:
         "full_docx": f"{prefix}/generate-full",
         "german_pdf": f"{prefix}/generate-german-cv",
         "german_tex": f"{prefix}/generate-tex-cv",
+        "diff_preview": f"{prefix}/diff-preview",
+        "analyze_bulk": f"{prefix}/analyze-bulk",
     }
 
 
@@ -428,6 +430,29 @@ def reset_all():
     st.session_state["last_analysis"] = None
     st.session_state["uploaded_file_data"] = None
     st.session_state["job_desc"] = ""
+
+
+def render_diff_view(diff_data_list):
+    st.markdown("### Visual Bullet Point Comparison")
+
+    for index, item in enumerate(diff_data_list, 1):
+        similarity = item.get("similarity_ratio", 0)
+        with st.expander(
+            f"Bullet Point #{index} (Similarity: {similarity}%)",
+            expanded=True,
+        ):
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.caption("Original Bullet Point")
+                st.info(item.get("original") or "N/A")
+
+            with col2:
+                st.caption("Optimized Bullet Point")
+                st.success(item.get("optimized") or "N/A")
+
+            st.caption("Inline Changes:")
+            st.markdown(item.get("diff_html", ""), unsafe_allow_html=True)
 
 
 # ==============================================================================
@@ -909,3 +934,110 @@ if st.session_state.get("last_analysis"):
                         )
                     else:
                         st.error(f"TEX generation failed: {error_detail(response)}")
+
+
+# ==============================================================================
+# ADVANCED WORKFLOW TOOLS
+# ==============================================================================
+
+st.divider()
+st.header("⚡ Advanced Workflow Tools")
+
+tool_tab1, tool_tab2 = st.tabs(["🔍 Visual Bullet Diff", "👥 Bulk CV Screening"])
+
+with tool_tab1:
+    st.caption("Compare original bullet points against AI-generated rewrites.")
+    orig_text = st.text_area("Original Bullets (one per line)", height=100)
+    opt_text = st.text_area("Optimized Bullets (one per line)", height=100)
+
+    if st.button("Compare Bullets", use_container_width=True):
+        orig_list = [line.strip() for line in orig_text.splitlines() if line.strip()]
+        opt_list = [line.strip() for line in opt_text.splitlines() if line.strip()]
+
+        if not orig_list or not opt_list:
+            st.warning("Please provide both original and optimized bullet points.")
+        else:
+            payload = {
+                "original_bullets": orig_list,
+                "optimized_bullets": opt_list,
+            }
+
+            try:
+                response = requests.post(
+                    ENDPOINTS["diff_preview"],
+                    json=payload,
+                    timeout=REQUEST_TIMEOUT,
+                )
+            except requests.exceptions.RequestException as exc:
+                st.error(f"Could not fetch diff preview: {exc}")
+            else:
+                if response.status_code == 200:
+                    render_diff_view(response.json().get("diffs", []))
+                else:
+                    st.error(f"Could not fetch diff preview: {error_detail(response)}")
+
+with tool_tab2:
+    st.caption(
+        "Analyze multiple candidate resumes simultaneously against a target job description."
+    )
+    bulk_job_desc = st.text_area(
+        "Target Job Description for Bulk Screening",
+        height=120,
+    )
+    bulk_files = st.file_uploader(
+        "Upload Multiple Resumes",
+        type=["pdf", "docx", "txt"],
+        accept_multiple_files=True,
+        key="bulk_files_uploader",
+    )
+
+    if st.button("Run Bulk Analysis", type="primary", use_container_width=True):
+        if not bulk_job_desc.strip() or not bulk_files:
+            st.warning(
+                "Please provide both a job description and at least one resume file."
+            )
+        else:
+            files_payload = [
+                (
+                    "resume_files",
+                    (file.name, file.getvalue(), file.type or "application/octet-stream"),
+                )
+                for file in bulk_files
+            ]
+            data_payload = {"job_description": bulk_job_desc}
+
+            response = api_request(
+                ENDPOINTS["analyze_bulk"],
+                data=data_payload,
+                files=files_payload,
+                spinner_text="Screening applicant batch...",
+            )
+
+            if response and response.status_code == 200:
+                results = response.json().get("rankings", [])
+                st.success(f"Successfully processed {len(results)} candidate resumes.")
+
+                dataframe = pd.DataFrame(results)
+                if not dataframe.empty:
+                    st.dataframe(
+                        dataframe[["filename", "ats_score", "keyword_density"]],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                for candidate in results:
+                    with st.expander(
+                        f"📄 {candidate['filename']} — "
+                        f"Score: {candidate['ats_score']}%"
+                    ):
+                        col_a, col_b = st.columns(2)
+
+                        with col_a:
+                            st.markdown("**Matching Skills:**")
+                            chips(candidate.get("matching_skills", []), "good")
+
+                        with col_b:
+                            st.markdown("**Missing Skills:**")
+                            chips(candidate.get("missing_skills", []), "bad")
+            else:
+                st.error(f"Bulk screening failed: {error_detail(response)}")

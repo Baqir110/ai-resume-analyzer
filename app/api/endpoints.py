@@ -1,6 +1,7 @@
 import io
-from typing import Optional
-
+from typing import List, Optional
+from pydantic import BaseModel
+from app.services.diff_preview import DiffPreviewService
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt
@@ -15,6 +16,7 @@ from fastapi.responses import StreamingResponse
 
 from app.models.schemas import AnalysisResponse
 from app.services.analyzer import analyze_resume_content
+from app.services.bulk_analyzer import BulkAnalyzerService
 from app.services.latex_generator import (
     compile_latex_to_pdf,
     generate_german_latex_content,
@@ -31,6 +33,49 @@ from app.services.optimizer import (
 from app.services.parser import extract_text_from_file
 
 router = APIRouter()
+
+#difference view :
+
+class BulletDiffRequest(BaseModel):
+    original_bullets: List[str]
+    optimized_bullets: List[str]
+
+@router.post("/resume/diff-preview")
+async def diff_preview(payload: BulletDiffRequest):
+    try:
+        diffs = DiffPreviewService.compare_bullet_lists(
+            payload.original_bullets, payload.optimized_bullets
+        )
+        return {"status": "success", "diffs": diffs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/resume/analyze-bulk")
+async def analyze_bulk(
+    job_description: str = Form(...),
+    resume_files: List[UploadFile] = File(...),
+):
+    if not resume_files:
+        raise HTTPException(status_code=400, detail="No resume files uploaded.")
+
+    try:
+        files_data = []
+        for file in resume_files:
+            content = await file.read()
+            files_data.append((content, file.filename))
+
+        ranked_candidates = await BulkAnalyzerService.process_batch(
+            files_data, job_description
+        )
+
+        return {
+            "status": "success",
+            "total_processed": len(ranked_candidates),
+            "rankings": ranked_candidates,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================
