@@ -270,7 +270,7 @@ class LLMService:
     # DIRECT PROVIDER EXECUTION ENGINE
     # ----------------------------------------------------
 
-@classmethod
+    @classmethod
     def _execute_direct_gemini(cls, prompt: str, model: str, api_key: str) -> str:
         from google import genai
 
