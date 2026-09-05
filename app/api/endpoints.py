@@ -2,9 +2,8 @@ import io
 from typing import Optional
 
 from docx import Document
-from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-
+from docx.shared import Inches, Pt
 from fastapi import (
     APIRouter,
     File,
@@ -12,36 +11,24 @@ from fastapi import (
     HTTPException,
     UploadFile,
 )
-
-from fastapi.responses import (
-    StreamingResponse,
-    JSONResponse,
-)
+from fastapi.responses import StreamingResponse
 
 from app.models.schemas import AnalysisResponse
-
-from app.services.analyzer import (
-    analyze_resume_content,
-)
-
-from app.services.parser import (
-    extract_text_from_file,
-)
-
-from app.services.optimizer import (
-    optimize_resume_bullets,
-    generate_full_tailored_cv,
-    suggest_best_cv_format,
-)
-
+from app.services.analyzer import analyze_resume_content
 from app.services.latex_generator import (
-    generate_german_latex_content,
     compile_latex_to_pdf,
+    generate_german_latex_content,
 )
-
 from app.services.llm_provider import (
+    LOG_PATH,
     LLMService,
 )
+from app.services.optimizer import (
+    generate_full_tailored_cv,
+    optimize_resume_bullets,
+    suggest_best_cv_format,
+)
+from app.services.parser import extract_text_from_file
 
 router = APIRouter()
 
@@ -54,7 +41,6 @@ router = APIRouter()
 def build_ats_docx_resume(
     markdown_resume: str,
 ) -> bytes:
-
     doc = Document()
 
     for section in doc.sections:
@@ -64,51 +50,37 @@ def build_ats_docx_resume(
         section.right_margin = Inches(0.75)
 
     for line in markdown_resume.splitlines():
-
         stripped = line.strip()
 
         if not stripped:
             continue
 
         if stripped.startswith("# "):
-
             paragraph = doc.add_paragraph()
-
             run = paragraph.add_run(stripped[2:])
-
             run.bold = True
             run.font.size = Pt(18)
-
             paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
         elif stripped.startswith("## "):
-
             paragraph = doc.add_paragraph()
-
             run = paragraph.add_run(stripped[3:].upper())
-
             run.bold = True
             run.font.size = Pt(12)
 
         elif stripped.startswith(("* ", "- ")):
-
             paragraph = doc.add_paragraph(
                 stripped[2:].strip(),
                 style="List Bullet",
             )
-
             paragraph.style.font.size = Pt(10)
 
         else:
-
             paragraph = doc.add_paragraph(stripped)
-
             paragraph.style.font.size = Pt(10)
 
     buffer = io.BytesIO()
-
     doc.save(buffer)
-
     buffer.seek(0)
 
     return buffer.getvalue()
@@ -121,8 +93,10 @@ def build_ats_docx_resume(
 
 @router.get("/health")
 async def health_check():
-    """Lightweight endpoint for keep-alive pings (Cron-Job.org / UptimeRobot)."""
-    return {"status": "ok"}
+    """Lightweight endpoint for keep-alive pings."""
+    return {
+        "status": "ok",
+    }
 
 
 # ============================================================
@@ -140,7 +114,6 @@ async def analyze_resume(
     provider: Optional[str] = Form("gemini"),
     model_name: Optional[str] = Form(None),
 ):
-
     if not job_description.strip():
         raise HTTPException(
             status_code=400,
@@ -155,20 +128,26 @@ async def analyze_resume(
             detail="Could not extract readable text from resume.",
         )
 
+    # Combined ML + Rule-based evaluation from analyzer.py
     results = analyze_resume_content(
-        resume_text,
-        job_description,
+        resume_text=resume_text,
+        job_description=job_description,
     )
 
-    # Cross-check job description and resume text for format & language recommendation
+    # Format & language recommendation check
     results["recommendation"] = suggest_best_cv_format(
         job_description=job_description,
         resume_text=resume_text,
     )
 
     if results.get("missing_skills"):
-
         try:
+            print(
+                f"[AI DEBUG] /analyze "
+                f"provider={provider!r} "
+                f"model_name={model_name!r} "
+                f"missing_skills={results.get('missing_skills')!r}"
+            )
 
             rewrite = optimize_resume_bullets(
                 resume_text=resume_text,
@@ -187,6 +166,7 @@ async def analyze_resume(
             )
 
         except Exception as exc:
+            print(f"[AI DEBUG] /analyze bullet rewrite failed: {exc}")
 
             results.setdefault(
                 "improvement_suggestions",
@@ -216,12 +196,17 @@ async def generate_full_cv_endpoint(
     provider: Optional[str] = Form("gemini"),
     model_name: Optional[str] = Form(None),
 ):
-
     resume_text = await extract_text_from_file(resume_file)
 
+    if not resume_text:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not extract readable text from resume.",
+        )
+
     analysis = analyze_resume_content(
-        resume_text,
-        job_description,
+        resume_text=resume_text,
+        job_description=job_description,
     )
 
     missing_skills = analysis.get("missing_skills") or []
@@ -238,11 +223,12 @@ async def generate_full_cv_endpoint(
     return StreamingResponse(
         io.BytesIO(docx_bytes),
         media_type=(
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            "application/vnd.openxmlformats-officedocument." "wordprocessingml.document"
         ),
         headers={
-            "Content-Disposition": "attachment; "
-            "filename=Tailored_Optimized_Resume.docx"
+            "Content-Disposition": (
+                "attachment; filename=Tailored_Optimized_Resume.docx"
+            )
         },
     )
 
@@ -261,14 +247,19 @@ async def generate_german_cv_endpoint(
     provider: Optional[str] = Form("gemini"),
     model_name: Optional[str] = Form(None),
 ):
-
     selected_style = template_style or layout_style or "german_corporate"
 
     resume_text = await extract_text_from_file(resume_file)
 
+    if not resume_text:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not extract readable text from resume.",
+        )
+
     analysis = analyze_resume_content(
-        resume_text,
-        job_description,
+        resume_text=resume_text,
+        job_description=job_description,
     )
 
     missing_skills = analysis.get("missing_skills") or []
@@ -283,23 +274,21 @@ async def generate_german_cv_endpoint(
     )
 
     try:
-
         pdf_bytes = compile_latex_to_pdf(latex_code)
-
     except Exception as exc:
-
         raise HTTPException(
             status_code=500,
-            detail=("LaTeX compilation failed.\n\n" f"{exc}"),
+            detail=f"LaTeX compilation failed.\n\n{exc}",
         ) from exc
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={
-            "Content-Disposition": "attachment; "
-            f"filename=Lebenslauf_Muhammad_Baqir_"
-            f"{selected_style}.pdf"
+            "Content-Disposition": (
+                "attachment; "
+                f"filename=Lebenslauf_Muhammad_Baqir_{selected_style}.pdf"
+            )
         },
     )
 
@@ -318,14 +307,19 @@ async def generate_tex_cv_endpoint(
     provider: Optional[str] = Form("gemini"),
     model_name: Optional[str] = Form(None),
 ):
-
     selected_style = template_style or layout_style or "german_corporate"
 
     resume_text = await extract_text_from_file(resume_file)
 
+    if not resume_text:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not extract readable text from resume.",
+        )
+
     analysis = analyze_resume_content(
-        resume_text,
-        job_description,
+        resume_text=resume_text,
+        job_description=job_description,
     )
 
     missing_skills = analysis.get("missing_skills") or []
@@ -343,9 +337,10 @@ async def generate_tex_cv_endpoint(
         io.BytesIO(latex_code.encode("utf-8")),
         media_type="text/plain",
         headers={
-            "Content-Disposition": "attachment; "
-            f"filename=Lebenslauf_Muhammad_Baqir_"
-            f"{selected_style}.tex"
+            "Content-Disposition": (
+                "attachment; "
+                f"filename=Lebenslauf_Muhammad_Baqir_{selected_style}.tex"
+            )
         },
     )
 
@@ -357,11 +352,10 @@ async def generate_tex_cv_endpoint(
 
 @router.get("/backend-status")
 async def backend_status():
-
     return {
         "status": "online",
         "providers": LLMService.provider_status(),
-        "log_file": str(LLMService.LOG_PATH),
+        "log_file": str(LOG_PATH),
     }
 
 
@@ -374,16 +368,13 @@ async def backend_status():
 async def processing_log(
     limit: int = 100,
 ):
-
-    limit = max(
-        1,
-        min(limit, 500),
-    )
+    limit = max(1, min(limit, 500))
+    logs = LLMService.recent_logs(limit)
 
     return {
         "status": "success",
-        "count": len(LLMService.recent_logs(limit)),
-        "logs": LLMService.recent_logs(limit),
+        "count": len(logs),
+        "logs": logs,
     }
 
 
@@ -394,7 +385,6 @@ async def processing_log(
 
 @router.delete("/processing-log")
 async def clear_processing_log():
-
     LLMService.clear_logs()
 
     return {

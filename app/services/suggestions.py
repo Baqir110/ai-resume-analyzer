@@ -6,68 +6,47 @@ def generate_recommendations(
     ats_score: float, missing_skills: List[str], matching_skills: List[str]
 ) -> List[str]:
     """
-    Generates high-impact, actionable optimization advice based on resume analysis.
-    Enforces additive enrichment to maximize ATS alignment without altering original facts.
+    Generates actionable advice to achieve 100% ATS score compliance.
     """
     recommendations = []
 
-    # ------------------------------------------------------------
-    # 1. Tiered ATS Alignment Advice
-    # ------------------------------------------------------------
+    # 1. Tiered ATS Match Score Feedback
     if ats_score < 40.0:
         recommendations.append(
-            "CRITICAL ALIGNMENT GAP: Low match score detected. Expand your existing work history and project entries by integrating exact tools, frameworks, and methodologies required by the job posting."
+            "CRITICAL MATCH GAP: Match score is low. Explicitly weave missing target frameworks and operational tools directly into your primary job bullet points."
         )
     elif ats_score < 60.0:
         recommendations.append(
-            "MODERATE ALIGNMENT GAP: Core technical terms are missing. Weave target job keywords directly into your experience bullet points, ensuring tools are contextualized within project deliverables."
+            "MODERATE MATCH GAP: Core technical terms are missing. Contextualize key tools within project outcomes across your experience section."
         )
     elif ats_score < 75.0:
         recommendations.append(
-            "GOOD ALIGNMENT: Strong keyword foundation. Strengthen your resume by ensuring missing specialized tools and secondary requirements appear in both your Technical Skills block and job descriptions."
+            "GOOD ALIGNMENT: Strong baseline match. To reach 100%, list specialized secondary skills in both the Technical Skills list and job descriptions."
         )
     elif ats_score < 90.0:
         recommendations.append(
-            "HIGH ALIGNMENT: Excellent keyword match! Verify that all target technologies appear naturally inside high-impact accomplishment bullets alongside measurable results."
+            "HIGH ALIGNMENT: Excellent match! Ensure target skills appear near strong action verbs in accomplishment bullets alongside quantifiable metrics."
         )
     else:
         recommendations.append(
-            "OUTSTANDING ALIGNMENT: Near-perfect ATS match! Ensure formatting is clean, single-column, and free of tables or complex graphics to ensure smooth ATS parsing."
+            "OUTSTANDING ATS MATCH: 100% Optimization reached! Keep document layout single-column and free of tables, headers/footers, or complex graphics."
         )
 
-    # ------------------------------------------------------------
-    # 2. Targeted Keyword Injection Advice
-    # ------------------------------------------------------------
+    # 2. Precise Keyword Injection Plan
     if missing_skills:
         top_missing = missing_skills[:7]
         skills_str = ", ".join(top_missing)
         recommendations.append(
-            f"KEYWORD INJECTION: Explicitly add these missing technical terms to your Technical Skills section and relevant project descriptions: {skills_str}."
+            f"KEYWORD INJECTION: Explicitly add these terms to both Technical Skills and Experience entries: {skills_str}."
         )
     else:
         recommendations.append(
-            "FULL KEYWORD COVERAGE: All primary technical skills extracted from the job posting were successfully detected in your CV."
+            "FULL KEYWORD COVERAGE: All primary job skills were detected in your resume."
         )
 
-    # ------------------------------------------------------------
-    # 3. Technical Depth & Achievement Quality Checks
-    # ------------------------------------------------------------
-    num_matched = len(matching_skills)
-
-    if num_matched < 5 and missing_skills:
-        recommendations.append(
-            "TECHNICAL SPECIFICITY: Increase depth by explicitly naming version control systems, deployment environments, databases, CI/CD pipelines, and monitoring tools mentioned in the job posting."
-        )
-    elif num_matched >= 5:
-        recommendations.append(
-            "QUANTIFIABLE IMPACT: Combine matched technical skills with measurable metrics (e.g., system scale, performance optimizations, latency reductions, or ticket resolution efficiency)."
-        )
-
-    # ------------------------------------------------------------
-    # 4. Fact Preservation & ATS Formatting Guidance
-    # ------------------------------------------------------------
+    # 3. Structural & Parsing Rules for 100% Compliance
     recommendations.append(
-        "FORMATTING & ACCURACY RULE: Maintain 100% factual integrity. Add missing technical keywords as additive context to existing roles without changing company names, job titles, employment dates, or degree titles."
+        "FORMATTING RULE FOR 100% ATS COMPLIANCE: Use standard headings (e.g., 'Work Experience', 'Technical Skills', 'Education'). Avoid tables, text boxes, or dual-column sidebar layouts that split text flow."
     )
 
     return recommendations

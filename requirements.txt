@@ -1,18 +1,32 @@
+# Web Framework & Server
 fastapi
 uvicorn[standard]
+python-multipart
+streamlit>=1.30.0
+
+# Core Configuration & Validation
 pydantic
 pydantic-settings
-python-multipart
+python-dotenv
+
+# Document Parsing & Export
 pypdf
 python-docx>=1.1.0
+weasyprint
+cffi
+
+# Natural Language Processing & Analytics
 scikit-learn
-pytest
-httpx
+spacy>=3.7.0
+
+# LLM & AI Provider SDKs
 google-genai>=0.1.0
 openai>=1.12.0
 anthropic>=0.18.0
 groq
+huggingface-hub
 requests>=2.31.0
-weasyprint
-cffi
-python-dotenv
+
+# Testing & HTTP Clients
+pytest
+httpx

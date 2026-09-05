@@ -1,5 +1,6 @@
 import io
 import os
+import socket
 import time
 from pathlib import Path
 
@@ -18,16 +19,17 @@ except Exception:
         )
     )
 
-
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
 
-# Dynamic base URL: Checks environment variable first, then Render, then local fallback
-DEFAULT_API_BASE = os.getenv(
-    "FASTAPI_API_BASE",
-    "https://ai-resume-backend-vowl.onrender.com",
-)
+_configured_api_base = os.getenv("FASTAPI_API_BASE", "").strip()
+
+if _configured_api_base:
+    DEFAULT_API_BASE = _configured_api_base.rstrip("/")
+else:
+    DEFAULT_API_BASE = "http://localhost:8000"
+
 REQUEST_TIMEOUT = 120
 
 PROVIDER_LABELS = {
@@ -47,14 +49,16 @@ DEFAULT_MODELS = {
     "deepseek": "deepseek-chat",
     "ollama": "llama3",
     "openai": "gpt-4o-mini",
-    "claude": "claude-3-5-haiku-20241022",
+    "claude": "claude-fable-5",
 }
 
 TEMPLATE_LABELS = {
+    "hr_executive_gold": "HR Gold Standard (Executive)",
     "german_corporate": "Corporate Slate Navy",
     "german_modern": "Modern Two-Column",
-    "german_classic": "Classic Conservative",
+    "german_classic": "German Classic Single-Column PDF",
     "international_ats": "International English ATS",
+    "standard": "Standard ATS Single-Column",
 }
 
 
@@ -732,7 +736,7 @@ if st.session_state.get("last_analysis"):
     # ==========================================================================
 
     recommendation = result.get("recommendation") or {}
-    recommended_format = recommendation.get("recommended_format", "german_corporate")
+    recommended_format = recommendation.get("recommended_format", "hr_executive_gold")
 
     if recommendation:
         with st.container(border=True):
@@ -782,7 +786,7 @@ if st.session_state.get("last_analysis"):
     tab1, tab2 = st.tabs(
         [
             "📄 Standard ATS Resume",
-            "🇩🇪 German Lebenslauf",
+            "🇩🇪 German Lebenslauf / PDF Options",
         ]
     )
 
@@ -795,9 +799,7 @@ if st.session_state.get("last_analysis"):
             type="primary",
         ):
             if not build_files_payload():
-                st.error(
-                    "Resume file is no longer available. Please upload it again."
-                )
+                st.error("Resume file is no longer available. Please upload it again.")
             else:
                 data = {
                     "job_description": st.session_state["job_desc"],
@@ -824,7 +826,7 @@ if st.session_state.get("last_analysis"):
                     st.error(f"Generation failed: {error_detail(response)}")
 
     with tab2:
-        st.caption("Generate a German-style Lebenslauf as PDF or raw LaTeX source.")
+        st.caption("Generate a structured CV as PDF or raw LaTeX source.")
 
         template_options = list(TEMPLATE_LABELS.keys())
         default_index = (
@@ -872,7 +874,7 @@ if st.session_state.get("last_analysis"):
                         st.download_button(
                             "📥 Download PDF",
                             response.content,
-                            f"Lebenslauf_{selected_layout}.pdf",
+                            f"CV_{selected_layout}.pdf",
                             "application/pdf",
                             use_container_width=True,
                         )
@@ -901,7 +903,7 @@ if st.session_state.get("last_analysis"):
                         st.download_button(
                             "📥 Download TEX",
                             response.content,
-                            f"Lebenslauf_{selected_layout}.tex",
+                            f"CV_{selected_layout}.tex",
                             "text/plain",
                             use_container_width=True,
                         )

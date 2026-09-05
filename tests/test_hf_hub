@@ -1,0 +1,19 @@
+import os
+from dotenv import load_dotenv
+from huggingface_hub import HfApi
+
+# 1. Force load variables from .env over system defaults
+load_dotenv(override=True)
+
+hf_token = os.getenv("HF_TOKEN")
+
+if not hf_token:
+    print("❌ HF_TOKEN not found in .env")
+else:
+    try:
+        # 2. Pass the token explicitly to the API client
+        api = HfApi(token=hf_token)
+        user_info = api.whoami()
+        print(f"✅ Authenticated as: {user_info['name']}")
+    except Exception as exc:
+        print(f"❌ Authentication failed: {exc}")
