@@ -14,6 +14,8 @@ from app.services.llm_provider import LLMService
 
 def latex_escape_url(url: str) -> str:
     r"""Safely prepare a URL for use as the first argument of \href."""
+    if not url:
+        return ""
     url = url.strip()
 
     match = re.fullmatch(r"\[([^\]]+)\]\(([^)]+)\)", url)
@@ -23,7 +25,7 @@ def latex_escape_url(url: str) -> str:
     if url.startswith("{") and url.endswith("}"):
         url = url[1:-1].strip()
 
-    url = url.strip("`").strip()
+    url = url.strip("`").strip("'").strip('"')
     url = url.replace(r"\_", "_")
 
     return url
@@ -64,13 +66,6 @@ def normalize_latex_links(text: str) -> str:
 
     text = markdown_link.sub(convert_markdown_link, text)
 
-    bare_markdown_url = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
-
-    text = bare_markdown_url.sub(
-        lambda m: rf"\hrlink{{{latex_escape_url(m.group(2))}}}{{{m.group(1).strip()}}}",
-        text,
-    )
-
     return text
 
 
@@ -86,7 +81,11 @@ def clean_llm_response_to_latex(text: str) -> str:
         or text.startswith("Sure")
         or "Please provide" in text
     ):
-        return r"\section*{Profil}\n\noindent Resume optimization pending input."
+        return (
+            r"\section*{Profil}"
+            + "\n"
+            + r"\noindent Resume optimization pending input."
+        )
 
     return text
 
@@ -105,13 +104,13 @@ def clean_body_for_latex(body_text: str) -> str:
     """Sanitize generated body content without breaking LaTeX macros."""
     body_text = normalize_latex_links(body_text)
 
-    # Fix illegal line breaks
+    # Fix illegal line breaks before block macros
     body_text = re.sub(r"\\\\(?=\s*\\section\*?\{)", "", body_text)
     body_text = re.sub(r"\\\\(?=\s*\\begin\{)", "", body_text)
     body_text = re.sub(r"\\\\(?=\s*\\end\{)", "", body_text)
     body_text = re.sub(r"\\\\(?=\s*\n\s*\n)", "", body_text)
 
-    # Normalize Unicode characters
+    # Normalize Unicode characters and formatting symbols
     replacements = {
         "\u202f": " ",
         "\u200b": "",
@@ -123,7 +122,8 @@ def clean_body_for_latex(body_text: str) -> str:
         "\u201c": '"',
         "\u201d": '"',
         "\xa0": " ",
-        " \vert{} ": r" \quad$\cdot$\quad ",
+        r"\vert{}": r" \quad$\cdot$\quad ",
+        r"\vert": r" \quad$\cdot$\quad ",
     }
 
     for char, repl in replacements.items():
@@ -131,9 +131,10 @@ def clean_body_for_latex(body_text: str) -> str:
 
     body_text = strip_code_fences(body_text)
 
-    # Escape unescaped ampersands and percent signs
+    # Escape special unescaped characters in normal text context
     body_text = re.sub(r"(?<!\\)&", r"\&", body_text)
     body_text = re.sub(r"(?<!\\)%", r"\%", body_text)
+    body_text = re.sub(r"(?<!\\)_", r"\_", body_text)
 
     return body_text.strip()
 
@@ -195,6 +196,8 @@ GERMAN_CORPORATE_LATEX_TEMPLATE = r"""
     \textit{\color{subgray}#3}
     \par\vspace{1pt}%
 }
+
+\newcommand{\degreeheader}[3]{\jobheader{#1}{#2}{#3}}
 
 \newcommand{\projheader}[3]{%
     \noindent
@@ -296,6 +299,8 @@ GERMAN_ATS_LATEX_TEMPLATE = r"""
     \par\vspace{1pt}%
 }
 
+\newcommand{\degreeheader}[3]{\jobheader{#1}{#2}{#3}}
+
 \newcommand{\projheader}[3]{%
     \noindent
     \textbf{#1} \ifx\relax#2\relax\else(#2)\fi
@@ -387,6 +392,8 @@ GERMAN_CLASSIC_LATEX_TEMPLATE = r"""
     \textbf{#1}, #2 \hfill \textit{#3}
     \par\vspace{1pt}%
 }
+
+\newcommand{\degreeheader}[3]{\jobheader{#1}{#2}{#3}}
 
 \newcommand{\projheader}[3]{%
     \noindent
@@ -491,6 +498,8 @@ GERMAN_MODERN_LATEX_TEMPLATE = r"""
     \par\vspace{1pt}%
 }
 
+\newcommand{\degreeheader}[3]{\jobheader{#1}{#2}{#3}}
+
 \newcommand{\projheader}[3]{%
     \noindent
     \textbf{\color{darkgray}#1}
@@ -591,6 +600,8 @@ INTERNATIONAL_ATS_LATEX_TEMPLATE = r"""
     \par\vspace{1pt}%
 }
 
+\newcommand{\degreeheader}[3]{\jobheader{#1}{#2}{#3}}
+
 \newcommand{\projheader}[3]{%
     \noindent
     \textbf{\color{primary}#1}
@@ -632,12 +643,208 @@ RESUME_BODY_PLACEHOLDER
 \end{document}
 """
 
+STANDARD_LATEX_TEMPLATE = r"""
+\documentclass[10pt,a4paper]{article}
+
+\usepackage[top=1.0cm,bottom=1.0cm,left=1.5cm,right=1.5cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{hyperref}
+
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
+
+\definecolor{primary}{HTML}{1A202C}
+\definecolor{secondary}{HTML}{4A5568}
+\definecolor{linkcolor}{HTML}{2B6CB0}
+
+\hypersetup{
+    colorlinks=true,
+    urlcolor=linkcolor,
+    linkcolor=linkcolor,
+    pdfborder={0 0 0}
+}
+
+\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{#2}}
+
+\titleformat{\section}
+    {\large\bfseries\color{primary}}
+    {}{0em}{}
+    [\vspace{-2pt}\rule{\textwidth}{0.5pt}]
+
+\titlespacing{\section}{0pt}{6pt}{3pt}
+
+\setlist[itemize]{
+    leftmargin=1.2em,
+    itemsep=1pt,
+    topsep=1pt,
+    parsep=0pt
+}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{1pt}
+
+\newcommand{\jobheader}[3]{%
+    \noindent
+    \textbf{\color{primary}#1}, #2 \hfill \textit{\color{secondary}#3}
+    \par\vspace{1pt}%
+}
+
+\newcommand{\degreeheader}[3]{\jobheader{#1}{#2}{#3}}
+
+\newcommand{\projheader}[3]{%
+    \noindent
+    \textbf{\color{primary}#1} \ifx\relax#2\relax\else\textit{\color{secondary}(#2)}\fi
+    \ifx\relax#3\relax
+    \else
+        \hfill\hrlink{#3}{[GitHub]}
+    \fi
+    \par\vspace{1pt}%
+}
+
+\pagestyle{empty}
+
+\begin{document}
+
+\begin{center}
+
+    {\LARGE\bfseries\color{primary} Muhammad Baqir}\\[3pt]
+
+    {\large\color{secondary} IT Support Engineer \textbar{} DevOps \textbar{} MLOps}\\[4pt]
+
+    {\small\color{secondary}
+        Bamberg, Germany
+        \quad$\cdot$\quad
+        +49 152 17975480
+        \quad$\cdot$\quad
+        \hrlink{mailto:hzindabad44@gmail.com}{hzindabad44@gmail.com}
+        \quad$\cdot$\quad
+        \hrlink{LINKEDIN_URL_PLACEHOLDER}{LinkedIn}
+        \quad$\cdot$\quad
+        \hrlink{GITHUB_URL_PLACEHOLDER}{GitHub}
+    }
+
+\end{center}
+
+\vspace{2pt}
+
+RESUME_BODY_PLACEHOLDER
+
+\end{document}
+"""
+
+HR_EXECUTIVE_GOLD_LATEX_TEMPLATE = r"""
+\documentclass[10pt,a4paper]{article}
+
+\usepackage[top=0.75cm,bottom=0.75cm,left=1.1cm,right=1.1cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{hyperref}
+
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
+
+\definecolor{primary}{HTML}{0B192C}
+\definecolor{goldaccent}{HTML}{1E3E62}
+\definecolor{secondary}{HTML}{475569}
+\definecolor{linkcolor}{HTML}{1E40AF}
+
+\hypersetup{
+    colorlinks=true,
+    urlcolor=linkcolor,
+    linkcolor=linkcolor,
+    pdfborder={0 0 0}
+}
+
+\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{#2}}
+
+\titleformat{\section}
+    {\large\bfseries\color{primary}\uppercase}
+    {}{0em}{}
+    [\vspace{-2pt}\color{goldaccent}\rule{\textwidth}{1.0pt}]
+
+\titlespacing{\section}{0pt}{5pt}{3pt}
+
+\setlist[itemize]{
+    leftmargin=1.1em,
+    itemsep=0.8pt,
+    topsep=0.8pt,
+    parsep=0pt
+}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.5pt}
+
+\newcommand{\jobheader}[3]{%
+    \noindent
+    \textbf{\color{primary}#1} \textbar{} \textcolor{secondary}{#2}
+    \hfill
+    \textbf{\color{goldaccent}#3}
+    \par\vspace{1pt}%
+}
+
+\newcommand{\degreeheader}[3]{\jobheader{#1}{#2}{#3}}
+
+\newcommand{\projheader}[3]{%
+    \noindent
+    \textbf{\color{primary}#1}
+    \ifx\relax#2\relax\else\textit{\color{secondary}(#2)}\fi
+    \ifx\relax#3\relax
+    \else
+        \hfill\hrlink{#3}{\textbf{[GitHub]}}
+    \fi
+    \par\vspace{1pt}%
+}
+
+\pagestyle{empty}
+
+\begin{document}
+
+\begin{center}
+
+    {\Huge\bfseries\color{primary} Muhammad Baqir}\\[3pt]
+
+    {\large\bfseries\color{goldaccent}
+    IT Support Engineer \textbar{} DevOps \textbar{} MLOps}\\[4pt]
+
+    {\small\color{secondary}
+        Bamberg, Germany
+        \quad$\cdot$\quad
+        +49 152 17975480
+        \quad$\cdot$\quad
+        \hrlink{mailto:hzindabad44@gmail.com}{hzindabad44@gmail.com}
+        \quad$\cdot$\quad
+        \hrlink{LINKEDIN_URL_PLACEHOLDER}{LinkedIn}
+        \quad$\cdot$\quad
+        \hrlink{GITHUB_URL_PLACEHOLDER}{GitHub}
+    }
+
+\end{center}
+
+\vspace{-2pt}
+
+RESUME_BODY_PLACEHOLDER
+
+\end{document}
+"""
+
 CV_TEMPLATES = {
     "german_corporate": GERMAN_CORPORATE_LATEX_TEMPLATE,
     "german_ats": GERMAN_ATS_LATEX_TEMPLATE,
     "german_classic": GERMAN_CLASSIC_LATEX_TEMPLATE,
     "german_modern": GERMAN_MODERN_LATEX_TEMPLATE,
     "international_ats": INTERNATIONAL_ATS_LATEX_TEMPLATE,
+    "standard": STANDARD_LATEX_TEMPLATE,
+    "hr_executive_gold": HR_EXECUTIVE_GOLD_LATEX_TEMPLATE,
 }
 
 # ============================================================
@@ -661,7 +868,7 @@ def _fallback_german_latex_body(
         else "Python, SQL, Docker, Linux, Git"
     )
 
-    if layout_style == "international_ats":
+    if layout_style in ("international_ats", "standard", "hr_executive_gold"):
         return rf"""
 \section*{{Professional Summary}}
 Motivated IT professional with hands-on experience in software engineering, IT support, infrastructure automation, and data systems. Proven ability to apply technical know-how to deliver reliable software and optimize day-to-day operations.
@@ -769,36 +976,26 @@ def generate_german_latex_content(
     if layout_style not in CV_TEMPLATES:
         layout_style = "german_corporate"
 
-    if layout_style == "international_ats":
-        section_names = r"""
-\section*{Professional Summary}
-
-\section*{Professional Experience}
-
-\section*{Projects}
-
-\section*{Education}
-
-\section*{Technical Skills}
-
-\section*{Languages \& Certifications}
-"""
+    if layout_style in ("international_ats", "standard", "hr_executive_gold"):
+        section_names = (
+            "\\section*{Professional Summary}\n\n"
+            "\\section*{Professional Experience}\n\n"
+            "\\section*{Projects}\n\n"
+            "\\section*{Education}\n\n"
+            "\\section*{Technical Skills}\n\n"
+            "\\section*{Languages \\& Certifications}"
+        )
     else:
-        section_names = r"""
-\section*{Profil}
+        section_names = (
+            "\\section*{Profil}\n\n"
+            "\\section*{Berufserfahrung}\n\n"
+            "\\section*{Projekte}\n\n"
+            "\\section*{Ausbildung}\n\n"
+            "\\section*{Kenntnisse}\n\n"
+            "\\section*{Sprachen \\& Zertifikate}"
+        )
 
-\section*{Berufserfahrung}
-
-\section*{Projekte}
-
-\section*{Ausbildung}
-
-\section*{Kenntnisse}
-
-\section*{Sprachen \& Zertifikate}
-"""
-
-    prompt = f"""
+    prompt = rf"""
 Optimize and enrich the candidate's CV body content to achieve the highest possible match against the target job description.
 
 Target Job Description:
@@ -818,7 +1015,7 @@ STRICT STRUCTURAL AND CONTENT RULES:
 1. DO NOT GENERATE ANY CONTACT HEADER, SIDEBAR, OR NAME BLOCK AT THE TOP.
    The document preamble already renders candidate contact headers.
    Start directly with the first section:
-   \section*{{Profil}}
+   \section*{{Profil}} or \section*{{Professional Summary}}
 
 2. PRESERVE ALL ORIGINAL DATA:
    - Do NOT delete any existing work experience entries, degrees, or projects.
@@ -829,9 +1026,9 @@ STRICT STRUCTURAL AND CONTENT RULES:
    - For any project links, strictly use valid repositories under the base URL: {github_url} (e.g. {github_url}/ai-it-ops-assistant, {github_url}/it-infrastructure-monitoring, {github_url}/customer-churn-analytics, {github_url}/real-time-pipeline).
    - Do NOT output generic placeholders like "repo-name" or "Link".
 
-4. WORK EXPERIENCE & PROJECTS:
+4. WORK EXPERIENCE, EDUCATION & PROJECTS:
    - Every bullet point inside \begin{{itemize}} MUST start strictly with \item.
-   - Use \jobheader{{Role | Sub-role}}{{Company, City}}{{Dates}} for jobs.
+   - Use \jobheader{{Role / Degree}}{{Company / University}}{{Dates}} for BOTH jobs and education. DO NOT use \degreeheader.
    - Use \projheader{{Project Name}}{{Tech Stack}}{{{github_url}/repo-name}} for projects.
 
 5. SKILLS SECTION:
@@ -879,14 +1076,14 @@ STRICT STRUCTURAL AND CONTENT RULES:
     if primary_color_hex:
         template = re.sub(
             r"\\definecolor\{primary\}\{HTML\}\{[A-Fa-f0-9]{6}\}",
-            f"\\\\definecolor{{primary}}{{HTML}}{{{primary_color_hex.strip('#')}}}",
+            rf"\\definecolor{{primary}}{{HTML}}{{{primary_color_hex.strip('#')}}}",
             template,
         )
 
     if secondary_color_hex:
         template = re.sub(
             r"\\definecolor\{secondary\}\{HTML\}\{[A-Fa-f0-9]{6}\}",
-            f"\\\\definecolor{{secondary}}{{HTML}}{{{secondary_color_hex.strip('#')}}}",
+            rf"\\definecolor{{secondary}}{{HTML}}{{{secondary_color_hex.strip('#')}}}",
             template,
         )
 
@@ -948,7 +1145,7 @@ def compile_latex_to_pdf(latex_code: str) -> bytes:
             if first.returncode != 0:
                 output = (first.stdout or "") + "\n" + (first.stderr or "")
                 error_tail = output[-10000:]
-                raise RuntimeError("LaTeX compilation failed:\n\n" f"{error_tail}")
+                raise RuntimeError(f"LaTeX compilation failed:\n\n{error_tail}")
 
             second = subprocess.run(
                 command,
@@ -965,7 +1162,7 @@ def compile_latex_to_pdf(latex_code: str) -> bytes:
                 output = (second.stdout or "") + "\n" + (second.stderr or "")
                 error_tail = output[-10000:]
                 raise RuntimeError(
-                    "LaTeX compilation failed on the second pass:\n\n" f"{error_tail}"
+                    f"LaTeX compilation failed on the second pass:\n\n{error_tail}"
                 )
 
         except subprocess.TimeoutExpired as exc:

@@ -13,23 +13,15 @@ import anthropic
 import openai
 import requests
 from dotenv import load_dotenv
-from google import genai
-from groq import Groq
 
 logger = logging.getLogger(__name__)
 
-# ============================================================
-# Environment
-# ============================================================
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_PATH = PROJECT_ROOT / ".env"
-load_dotenv(ENV_PATH, override=False)
-
-
-# ============================================================
-# Processing log
-# ============================================================
+load_dotenv(
+    ENV_PATH,
+    override=True,
+)
 
 DEFAULT_LOG_PATH = PROJECT_ROOT / "data" / "llm_processing.jsonl"
 LOG_PATH = Path(
@@ -38,80 +30,105 @@ LOG_PATH = Path(
         str(DEFAULT_LOG_PATH),
     )
 )
-
 if not LOG_PATH.is_absolute():
     LOG_PATH = PROJECT_ROOT / LOG_PATH
 
+# Experiential Gateway Configuration
+GATEWAY_BASE_URL = (
+    os.getenv(
+        "OPENAI_BASE_URL",
+        "https://api.experientiallabs.ai/v1",
+    )
+    .strip()
+    .rstrip("/")
+)
 
-# ============================================================
-# Provider configuration
-# ============================================================
+CLAUDE_GATEWAY_BASE_URL = (
+    GATEWAY_BASE_URL[:-3] if GATEWAY_BASE_URL.endswith("/v1") else GATEWAY_BASE_URL
+).rstrip("/")
 
-PROVIDER_ENV_KEYS = {
-    "gemini": "GEMINI_API_KEY",
-    "groq": "GROQ_API_KEY",
-    "openrouter": "OPENROUTER_API_KEY",
-    "deepseek": "DEEPSEEK_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "claude": "ANTHROPIC_API_KEY",
-}
+EXPERIENTIAL_API_KEY = (
+    os.getenv("EXPLABS_API_KEY", "").strip()
+    or os.getenv("EXPERIENTIAL_ORG_KEY", "").strip()
+)
 
 DEFAULT_MODELS = {
     "gemini": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
-    "groq": os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-    "openrouter": os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat"),
-    "deepseek": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
-    "openai": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-    "claude": os.getenv("CLAUDE_MODEL", "claude-3-5-haiku-20241022"),
-    "ollama": os.getenv("OLLAMA_MODEL", "llama3"),
+    "groq": os.getenv("GROQ_MODEL", "qwen3.8-27b"),
+    "openrouter": os.getenv("OPENROUTER_MODEL", "deepseek-v4-flash"),
+    "deepseek": os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+    "openai": os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
+    "claude": os.getenv("CLAUDE_MODEL", "claude-fable-5"),
+    "ollama": os.getenv("OLLAMA_MODEL", "qwen3.8-27b"),
 }
 
-
-# ============================================================
-# Logging & Sanitization Helpers
-# ============================================================
+SUPPORTED_PROVIDERS = (
+    "gemini",
+    "groq",
+    "openrouter",
+    "deepseek",
+    "openai",
+    "claude",
+    "ollama",
+)
 
 
 def clean_llm_output(text: str) -> str:
-    """Removes Markdown code fences and AI conversational meta-text from any provider's output."""
+    """Clean common LLM formatting artifacts."""
     if not text:
         return ""
 
     text = text.strip()
-
-    # Remove Markdown code fences
     text = re.sub(
-        r"^\s*```(?:latex|tex|html|markdown|json)?\s*", "", text, flags=re.IGNORECASE
+        r"^\s*```(?:latex|tex|html|markdown|json|text)?\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
     )
-    text = re.sub(r"\s*```\s*$", "", text)
+    text = re.sub(
+        r"\s*```\s*$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
     text = text.strip()
 
-    # Remove standard conversational intro phrases across all LLMs
     conversational_intros = [
-        r"^Here is the (?:optimized|tailored|updated|generated|LaTeX|HTML|resume|CV).*",
-        r"^Sure,? I can help with that.*",
-        r"^I'm ready to (?:enrich|optimize|help).*",
-        r"^Certainly! Here is.*",
-        r"^Below is the.*",
+        r"^(?:Here is|Sure[,!]?\s+Here is|Certainly[,!]?\s+Here is)\s+(?:the|an)?\s*(?:optimized|tailored|updated|generated|LaTeX|HTML|resume|CV).*?:?\s*",
+        r"^Sure,?\s+I can help with that\.?\s*",
+        r"^I'm ready to (?:enrich|optimize|help).*?:?\s*",
+        r"^Certainly!?\s+Here is.*?:?\s*",
+        r"^Below is the.*?:?\s*",
     ]
 
     for pattern in conversational_intros:
-        text = re.sub(pattern, "", text, flags=re.IGNORECASE).strip()
+        text = re.sub(
+            pattern,
+            "",
+            text,
+            flags=re.IGNORECASE,
+        ).strip()
 
     return text
 
 
 def _clean_base_url(url: str, default: str) -> str:
-    """Ensures base URLs are well-formed with http/https protocols."""
     if not url:
         return default
     url = url.strip()
-    match = re.search(r"https?://[^\s\)]+", url)
+
+    markdown_match = re.search(r"\]\((https?://[^)]+)\)", url)
+    if markdown_match:
+        return markdown_match.group(1).rstrip("/")
+
+    match = re.search(r"https?://[^\s)]+", url)
     if match:
-        return match.group(0)
-    if not url.startswith("http://") and not url.startswith("https://"):
-        return f"https://{url}"
-    return url
+        return match.group(0).rstrip("/")
+
+    if not url.startswith(("http://", "https://")):
+        return f"https://{url}".rstrip("/")
+
+    return url.rstrip("/")
 
 
 def _utc_now() -> str:
@@ -131,14 +148,25 @@ def _safe_error(exc: Exception) -> str:
     text = str(exc).strip()
     sensitive_values = []
 
-    for env_name in PROVIDER_ENV_KEYS.values():
-        value = os.getenv(env_name)
+    if EXPERIENTIAL_API_KEY:
+        sensitive_values.append(EXPERIENTIAL_API_KEY)
+
+    provider_key_names = [
+        "GEMINI_API_KEY",
+        "GROQ_API_KEY",
+        "OPENROUTER_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "EXPERIENTIAL_ORG_KEY",
+        "EXPLABS_API_KEY",
+        "ANTHROPIC_WORKSPACE_ID",
+    ]
+
+    for env_name in provider_key_names:
+        value = os.getenv(env_name, "").strip()
         if value:
             sensitive_values.append(value)
-
-    workspace = os.getenv("ANTHROPIC_WORKSPACE_ID", "")
-    if workspace:
-        sensitive_values.append(workspace)
 
     for value in sensitive_values:
         if value:
@@ -147,22 +175,10 @@ def _safe_error(exc: Exception) -> str:
     return text[:2000]
 
 
-# ============================================================
-# LLM Service
-# ============================================================
-
-
 class LLMService:
+
     DEFAULT_MODELS = DEFAULT_MODELS
-    SUPPORTED_PROVIDERS = (
-        "gemini",
-        "groq",
-        "openrouter",
-        "deepseek",
-        "openai",
-        "claude",
-        "ollama",
-    )
+    SUPPORTED_PROVIDERS = SUPPORTED_PROVIDERS
 
     @classmethod
     def get_default_model(cls, provider: str) -> str:
@@ -170,10 +186,47 @@ class LLMService:
         return cls.DEFAULT_MODELS.get(provider, "")
 
     @classmethod
+    def _get_gateway_key(cls) -> str:
+        key = (
+            os.getenv("EXPLABS_API_KEY", "").strip()
+            or os.getenv("EXPERIENTIAL_ORG_KEY", "").strip()
+        )
+        if not key:
+            raise ValueError(
+                "EXPLABS_API_KEY / EXPERIENTIAL_ORG_KEY is not configured."
+            )
+        return key
+
+    @classmethod
     def provider_status(cls) -> list[dict[str, Any]]:
         rows = []
         for provider in cls.SUPPORTED_PROVIDERS:
             model = cls.get_default_model(provider)
+
+            if provider == "claude":
+                configured = bool(EXPERIENTIAL_API_KEY)
+                rows.append(
+                    {
+                        "provider": provider,
+                        "model": model,
+                        "configured": configured,
+                        "authentication": "experiential_gateway_forced",
+                        "gateway": CLAUDE_GATEWAY_BASE_URL,
+                    }
+                )
+                continue
+
+            direct_key = None
+            if provider == "gemini":
+                direct_key = os.getenv("GEMINI_API_KEY")
+            elif provider == "openai":
+                direct_key = os.getenv("OPENAI_API_KEY")
+            elif provider == "groq":
+                direct_key = os.getenv("GROQ_API_KEY")
+            elif provider == "openrouter":
+                direct_key = os.getenv("OPENROUTER_API_KEY")
+            elif provider == "deepseek":
+                direct_key = os.getenv("DEEPSEEK_API_KEY")
 
             if provider == "ollama":
                 base_url = os.getenv(
@@ -189,53 +242,176 @@ class LLMService:
                         "endpoint": base_url,
                     }
                 )
-                continue
-
-            env_name = PROVIDER_ENV_KEYS[provider]
-            configured = bool(os.getenv(env_name, "").strip())
-
-            extra = {}
-            if provider == "claude":
-                extra["workspace_configured"] = bool(
-                    os.getenv("ANTHROPIC_WORKSPACE_ID", "").strip()
+            elif direct_key and direct_key.strip():
+                rows.append(
+                    {
+                        "provider": provider,
+                        "model": model,
+                        "configured": True,
+                        "authentication": "direct_api",
+                        "endpoint": "native_provider_api",
+                    }
                 )
-
-            rows.append(
-                {
-                    "provider": provider,
-                    "model": model,
-                    "configured": configured,
-                    "authentication": "api_key",
-                    **extra,
-                }
-            )
+            else:
+                configured = bool(EXPERIENTIAL_API_KEY)
+                rows.append(
+                    {
+                        "provider": provider,
+                        "model": model,
+                        "configured": configured,
+                        "authentication": "experiential_gateway",
+                        "gateway": GATEWAY_BASE_URL,
+                    }
+                )
 
         return rows
 
+    # ----------------------------------------------------
+    # DIRECT PROVIDER EXECUTION ENGINE
+    # ----------------------------------------------------
+
+@classmethod
+    def _execute_direct_gemini(cls, prompt: str, model: str, api_key: str) -> str:
+        from google import genai
+
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+        )
+        return response.text.strip()
+
     @classmethod
-    def _get_api_key(cls, provider: str, custom_key: Optional[str] = None) -> str:
-        if custom_key and custom_key.strip():
-            return custom_key.strip()
+    def _execute_direct_openai_style(
+        cls, prompt: str, model: str, api_key: str, base_url: Optional[str] = None
+    ) -> str:
+        client = (
+            openai.OpenAI(api_key=api_key, base_url=base_url)
+            if base_url
+            else openai.OpenAI(api_key=api_key)
+        )
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+        )
+        if not response.choices or not response.choices[0].message.content:
+            raise RuntimeError("Direct OpenAI-compatible API returned empty response.")
+        return response.choices[0].message.content.strip()
 
-        env_name = PROVIDER_ENV_KEYS.get(provider)
-        if not env_name:
-            return ""
-
-        key = os.getenv(env_name, "").strip()
-        if not key:
-            raise ValueError(f"{env_name} is not configured in .env.")
-
-        return key
+    # ----------------------------------------------------
+    # GATEWAY EXECUTION ENGINE
+    # ----------------------------------------------------
 
     @classmethod
-    def _get_claude_workspace_id(cls) -> str:
-        workspace = os.getenv("ANTHROPIC_WORKSPACE_ID", "").strip()
-        if not workspace:
-            raise ValueError(
-                "ANTHROPIC_WORKSPACE_ID is not configured in .env. "
-                "Identity-linked Anthropic API keys require a workspace ID."
+    def _execute_gateway(
+        cls,
+        prompt: str,
+        model: str,
+        provider: str,
+        api_key: Optional[str] = None,
+    ) -> str:
+        key = api_key.strip() if api_key and api_key.strip() else cls._get_gateway_key()
+
+        client = openai.OpenAI(
+            api_key=key,
+            base_url=GATEWAY_BASE_URL,
+        )
+
+        system_instruction = (
+            "[SYSTEM INSTRUCTION: DO NOT OUTPUT CONVERSATIONAL INTROS, GREETINGS, "
+            "FOOTERS, OR META-COMMENTARY. DO NOT ASK QUESTIONS. RETURN ONLY THE EXACT REQUESTED CODE OR TEXT FORMAT.]"
+        )
+
+        full_prompt = system_instruction + "\n\n" + (prompt or "")
+
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": full_prompt}],
+            temperature=0.3,
+        )
+
+        if not response.choices or not response.choices[0].message.content:
+            raise RuntimeError("Experiential Labs gateway returned an empty response.")
+
+        return response.choices[0].message.content.strip()
+
+    @classmethod
+    def _execute_claude_gateway(
+        cls,
+        prompt: str,
+        model: str,
+        api_key: Optional[str] = None,
+    ) -> str:
+        key = api_key.strip() if api_key and api_key.strip() else cls._get_gateway_key()
+
+        client = anthropic.Anthropic(
+            api_key=key,
+            base_url=CLAUDE_GATEWAY_BASE_URL,
+        )
+
+        system_instruction = (
+            "DO NOT OUTPUT CONVERSATIONAL INTROS, GREETINGS, FOOTERS, OR META-COMMENTARY. "
+            "DO NOT ASK QUESTIONS. RETURN ONLY THE EXACT REQUESTED CODE OR TEXT FORMAT."
+        )
+
+        response = client.messages.create(
+            model=model,
+            max_tokens=4096,
+            system=system_instruction,
+            messages=[{"role": "user", "content": prompt or ""}],
+        )
+
+        parts = [
+            getattr(block, "text", "")
+            for block in response.content
+            if getattr(block, "type", None) == "text"
+        ]
+        result = "".join(parts).strip()
+
+        if not result:
+            raise RuntimeError("Experiential Labs Claude returned an empty response.")
+
+        return result
+
+    @classmethod
+    def _execute_ollama(cls, prompt: str, model: str) -> str:
+        raw_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/api/generate")
+        url = _clean_base_url(raw_url, "http://localhost:11434/api/generate")
+
+        system_instruction = (
+            "DO NOT OUTPUT CONVERSATIONAL INTROS, GREETINGS, FOOTERS, OR META-COMMENTARY. "
+            "RETURN ONLY THE REQUESTED TEXT."
+        )
+
+        full_prompt = system_instruction + "\n\n" + (prompt or "")
+
+        response = requests.post(
+            url,
+            json={
+                "model": model,
+                "prompt": full_prompt,
+                "stream": False,
+            },
+            timeout=120,
+        )
+
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Ollama connection error ({response.status_code}): {response.text[:500]}"
             )
-        return workspace
+
+        payload = response.json()
+        result = payload.get("response", "").strip()
+
+        if not result:
+            raise RuntimeError("Ollama returned an empty response.")
+
+        return result
+
+    # ----------------------------------------------------
+    # SINGLE PROVIDER ROUTER
+    # ----------------------------------------------------
 
     @classmethod
     def _execute_single_provider(
@@ -245,104 +421,74 @@ class LLMService:
         model_name: Optional[str] = None,
         api_key: Optional[str] = None,
     ) -> str:
-        """Internal execution method for a single provider."""
+        provider = (provider or "gemini").strip().lower()
         model = model_name or cls.get_default_model(provider)
 
-        system_instruction = (
-            "[SYSTEM INSTRUCTION: DO NOT OUTPUT CONVERSATIONAL INTROS, GREETINGS, "
-            "FOOTERS, OR META-COMMENTARY. DO NOT ASK QUESTIONS. RETURN ONLY THE EXACT "
-            "REQUESTED CODE OR TEXT FORMAT.]\n\n"
-        )
-        full_prompt = system_instruction + prompt
-
-        if provider == "gemini":
-            key = cls._get_api_key("gemini", custom_key=api_key)
-            client = genai.Client(api_key=key)
-            chat = client.chats.create(model=model)
-            response = chat.send_message(full_prompt)
-            return getattr(response, "text", None) or ""
-
-        elif provider == "groq":
-            key = cls._get_api_key("groq", custom_key=api_key)
-            client = Groq(api_key=key)
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": full_prompt}],
-                temperature=0.3,
-            )
-            return response.choices[0].message.content or ""
-
-        elif provider == "openrouter":
-            key = cls._get_api_key("openrouter", custom_key=api_key)
-            raw_url = os.getenv("OPENROUTER_BASE_URL", "")
-            base_url = _clean_base_url(raw_url, "https://openrouter.ai/api/v1")
-            client = openai.OpenAI(api_key=key, base_url=base_url)
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": full_prompt}],
-                temperature=0.3,
-            )
-            return response.choices[0].message.content or ""
-
-        elif provider == "deepseek":
-            key = cls._get_api_key("deepseek", custom_key=api_key)
-            raw_url = os.getenv("DEEPSEEK_BASE_URL", "")
-            base_url = _clean_base_url(raw_url, "https://api.deepseek.com")
-            client = openai.OpenAI(api_key=key, base_url=base_url)
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": full_prompt}],
-                temperature=0.3,
-            )
-            return response.choices[0].message.content or ""
-
-        elif provider == "openai":
-            key = cls._get_api_key("openai", custom_key=api_key)
-            client = openai.OpenAI(api_key=key)
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": full_prompt}],
-                temperature=0.3,
-            )
-            return response.choices[0].message.content or ""
-
-        elif provider == "claude":
-            key = cls._get_api_key("claude", custom_key=api_key)
-            workspace_id = cls._get_claude_workspace_id()
-            client = anthropic.Anthropic(
-                api_key=key,
-                default_headers={"anthropic-workspace-id": workspace_id},
-            )
-            response = client.messages.create(
-                model=model,
-                max_tokens=4096,
-                temperature=0.3,
-                messages=[{"role": "user", "content": full_prompt}],
-            )
-            return "".join(
-                block.text
-                for block in response.content
-                if getattr(block, "type", None) == "text"
+        # Strictly route Claude requests through Experiential Gateway
+        if provider == "claude":
+            return cls._execute_claude_gateway(
+                prompt=prompt, model=model, api_key=api_key
             )
 
-        elif provider == "ollama":
-            raw_url = os.getenv(
-                "OLLAMA_BASE_URL",
-                "http://localhost:11434/api/generate",
-            )
-            url = _clean_base_url(raw_url, "http://localhost:11434/api/generate")
-            response = requests.post(
-                url,
-                json={"model": model, "prompt": full_prompt, "stream": False},
-                timeout=120,
-            )
-            if response.status_code != 200:
-                raise RuntimeError(f"Ollama connection error ({response.status_code})")
-            payload = response.json()
-            return payload.get("response", "") or ""
+        # 1. Check for Direct API Keys for non-Claude providers
+        direct_key = api_key
+        if not direct_key:
+            if provider == "gemini":
+                direct_key = os.getenv("GEMINI_API_KEY")
+            elif provider == "openai":
+                direct_key = os.getenv("OPENAI_API_KEY")
+            elif provider == "groq":
+                direct_key = os.getenv("GROQ_API_KEY")
+            elif provider == "openrouter":
+                direct_key = os.getenv("OPENROUTER_API_KEY")
+            elif provider == "deepseek":
+                direct_key = os.getenv("DEEPSEEK_API_KEY")
 
-        else:
-            raise ValueError(f"Unsupported AI provider: {provider}")
+        if direct_key and direct_key.strip():
+            try:
+                if provider == "gemini":
+                    return cls._execute_direct_gemini(prompt, model, direct_key.strip())
+                elif provider == "openai":
+                    return cls._execute_direct_openai_style(
+                        prompt, model, direct_key.strip()
+                    )
+                elif provider == "groq":
+                    return cls._execute_direct_openai_style(
+                        prompt,
+                        model,
+                        direct_key.strip(),
+                        base_url="https://api.groq.com/openai/v1",
+                    )
+                elif provider == "openrouter":
+                    return cls._execute_direct_openai_style(
+                        prompt,
+                        model,
+                        direct_key.strip(),
+                        base_url="https://openrouter.ai/api/v1",
+                    )
+                elif provider == "deepseek":
+                    return cls._execute_direct_openai_style(
+                        prompt,
+                        model,
+                        direct_key.strip(),
+                        base_url="https://api.deepseek.com",
+                    )
+            except Exception as exc:
+                logger.warning(
+                    f"Direct execution for '{provider}' failed ({_safe_error(exc)}). "
+                    f"Falling back to Experiential Labs gateway..."
+                )
+
+        # 2. Gateway Execution Fallback for remaining providers
+        if provider in ("gemini", "groq", "openrouter", "deepseek", "openai"):
+            return cls._execute_gateway(
+                prompt=prompt, model=model, provider=provider, api_key=api_key
+            )
+
+        if provider == "ollama":
+            return cls._execute_ollama(prompt=prompt, model=model)
+
+        raise ValueError(f"Unsupported AI provider: {provider}")
 
     @classmethod
     def generate(
@@ -353,41 +499,38 @@ class LLMService:
         api_key: Optional[str] = None,
         **kwargs: Any,
     ) -> str:
-        """
-        Executes generation with automatic fallback & retry logic across configured providers.
-        """
         primary_provider = (provider or "gemini").strip().lower()
 
-        # Build an ordered fallback chain
         fallback_chain = [
             primary_provider,
             "gemini",
+            "openai",
+            "deepseek",
             "groq",
             "openrouter",
-            "deepseek",
-            "openai",
             "claude",
             "ollama",
         ]
 
-        # Deduplicate preserving order
+        providers_to_try = []
         seen = set()
-        providers_to_try = [p for p in fallback_chain if not (p in seen or seen.add(p))]
+
+        for current_provider in fallback_chain:
+            if current_provider not in seen:
+                seen.add(current_provider)
+                providers_to_try.append(current_provider)
 
         started = time.perf_counter()
         request_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
-
         last_error = None
 
         for current_provider in providers_to_try:
             try:
-                # Check if provider has required configuration
-                if current_provider != "ollama":
-                    env_key = PROVIDER_ENV_KEYS.get(current_provider)
-                    if not env_key or not os.getenv(env_key, "").strip():
-                        if not api_key:
-                            last_error = f"{current_provider}: no API key configured"
-                            continue
+                selected_model = (
+                    model_name
+                    if (current_provider == primary_provider)
+                    else cls.get_default_model(current_provider)
+                )
 
                 _write_log(
                     {
@@ -395,25 +538,38 @@ class LLMService:
                         "request_id": request_id,
                         "event": "request_started",
                         "provider": current_provider,
-                        "model": model_name or cls.get_default_model(current_provider),
+                        "model": selected_model,
                         "prompt_chars": len(prompt or ""),
                         "status": "started",
                     }
+                )
+
+                logger.info(
+                    "LLM request %s started: provider=%s model=%s",
+                    request_id,
+                    current_provider,
+                    selected_model,
                 )
 
                 raw_text = cls._execute_single_provider(
                     prompt=prompt,
                     provider=current_provider,
                     model_name=(
-                        model_name if current_provider == primary_provider else None
+                        model_name if (current_provider == primary_provider) else None
                     ),
-                    api_key=api_key if current_provider == primary_provider else None,
+                    api_key=api_key,
                 )
 
-                if not raw_text.strip():
+                if not raw_text or not raw_text.strip():
                     raise RuntimeError("Provider returned an empty response.")
 
                 cleaned_text = clean_llm_output(raw_text)
+
+                if not cleaned_text:
+                    raise RuntimeError(
+                        "Provider returned empty content after cleaning."
+                    )
+
                 duration_ms = round((time.perf_counter() - started) * 1000, 1)
 
                 _write_log(
@@ -422,26 +578,39 @@ class LLMService:
                         "request_id": request_id,
                         "event": "request_completed",
                         "provider": current_provider,
-                        "model": model_name or cls.get_default_model(current_provider),
+                        "model": selected_model,
                         "duration_ms": duration_ms,
                         "response_chars": len(cleaned_text),
                         "status": "success",
                     }
                 )
 
+                logger.info(
+                    "LLM request %s completed: %s/%s in %sms",
+                    request_id,
+                    current_provider,
+                    selected_model,
+                    duration_ms,
+                )
+
                 return cleaned_text
 
             except Exception as exc:
                 last_error = _safe_error(exc)
-                logger.warning(
-                    f"LLM Provider '{current_provider}' failed. Trying next fallback. Error: {last_error}"
+
+                logger.exception(
+                    "LLM provider '%s' failed. Trying next fallback. Error: %s",
+                    current_provider,
+                    last_error,
                 )
+
                 _write_log(
                     {
                         "timestamp": _utc_now(),
                         "request_id": request_id,
                         "event": "provider_failed",
                         "provider": current_provider,
+                        "model": selected_model,
                         "status": "error",
                         "error": last_error,
                     }
