@@ -40,8 +40,9 @@ The application combines TF-IDF vector text similarity, dynamic keyword extracti
 ## Use Cases
 
 - **Job Application Tailoring**: Analyze and optimize resumes against specific job descriptions before submitting applications.
+- **Bulk Candidate Screening**: Rank and evaluate multiple applicant resumes simultaneously against a single job posting.
+- **Visual Diff Inspection**: Review word-level additions, deletions, and edits between original bullet points and AI-optimized versions.
 - **Multi-Format Export**: Generate clean, single-column ATS DOCX files or German `Lebenslauf` PDFs using vector-styled LaTeX templates.
-- **Recruitment Screening**: Parse candidate documents and evaluate skill coverage against open position requirements.
 - **Skill Gap Identification**: Flag specific tools, frameworks, and domain concepts missing from a candidate's profile.
 
 ---
@@ -54,22 +55,23 @@ The application combines TF-IDF vector text similarity, dynamic keyword extracti
 
 ## Key Features
 
-### Multi-Format Parsing
+### Multi-Format Parsing & Batch Processing
 
 * Parses text from **PDF** (via `PyPDF`), **DOCX** (via `python-docx`), and plain **TXT** files.
-* Extracts standard paragraphs alongside tabular data without cloud dependencies.
+* **Bulk Candidate Screening**: Concurrent multi-document processing engine that ranks applicant pools by ATS match score and skill coverage.
 
 ### Hybrid ATS Scoring & Skill Analysis
 
 * **TF-IDF & Cosine Similarity**: Evaluates textual similarity against job posting requirements.
 * **Dynamic Keyword Extraction**: Extracts technical nouns and skill terms from job descriptions to compute keyword density.
-* **Skill Gap Reporting**: Identifies matched and missing technical skills.
+* **Skill Gap Reporting**: Identifies matched and missing technical skills per applicant.
 
-### Additive LLM Resume Optimization
+### Additive LLM Optimization & Visual Diffing
 
 * **Fact-Preserving Enrichment**: Integrates missing target keywords into existing experience bullets and projects without deleting original companies, dates, or degree information.
-* **Multi-Provider & Gateway Support**: Seamlessly switch between Google GenAI (`google-genai`), Groq, OpenRouter, DeepSeek, OpenAI, Anthropic Claude (routed via Experiential Labs Gateway), or local Ollama.
-* **Strict Output Sanitization**: Strips conversational wrappers, markdown fences, and special LaTeX characters (`_`, `%`, `&`) from LLM responses before passing text to document generators.
+* **Visual Bullet Diff Preview**: Word-level diff calculation (`difflib`) highlighting additions, deletions, and percentage similarity between original and AI-optimized bullet points.
+* **Multi-Provider & Gateway Support**: Switch between Google GenAI (`google-genai`), Groq, OpenRouter, DeepSeek, OpenAI, Anthropic Claude (routed via Experiential Labs Gateway), or local Ollama.
+* **Strict Output Sanitization**: Strips conversational wrappers, markdown fences, and special LaTeX characters (`_`, `%`, `&`) before passing text to document generators.
 
 ### German Lebenslauf & ATS Templates
 
@@ -85,7 +87,7 @@ The application combines TF-IDF vector text similarity, dynamic keyword extracti
 | **Language** | Python | 3.9+ |
 | **Web Framework** | FastAPI | 0.110+ |
 | **Frontend UI** | Streamlit | 1.30+ |
-| **NLP & ML** | Scikit-Learn | 1.4+ |
+| **NLP & ML** | Scikit-Learn, spaCy | 1.4+ / 3.7+ |
 | **Document Parsing** | PyPDF, Python-Docx | 4.0+ / 1.1+ |
 | **Document Compilation** | TinyTeX / TeX Live (`pdflatex`) | System-level |
 | **AI Providers** | Google GenAI (`google-genai`), Groq, OpenRouter, DeepSeek, OpenAI, Anthropic, HuggingFace Hub | Latest |
@@ -100,7 +102,7 @@ ai-resume-analyzer/
 ├── app/
 │   ├── api/
 │   │   ├── __init__.py
-│   │   └── endpoints.py         # REST routes (/analyze, /generate-full, /generate-german-cv)
+│   │   └── endpoints.py         # REST routes (/analyze, /generate-full, /diff-preview, /analyze-bulk)
 │   │
 │   ├── core/
 │   │   ├── __init__.py
@@ -113,6 +115,8 @@ ai-resume-analyzer/
 │   ├── services/
 │   │   ├── __init__.py
 │   │   ├── analyzer.py          # Keyword extraction, TF-IDF, and scoring logic
+│   │   ├── bulk_analyzer.py     # Concurrent multi-resume batch processing
+│   │   ├── diff_preview.py      # Word-level diff calculation & html generation
 │   │   ├── latex_generator.py   # LaTeX template rendering, link fixing, and pdflatex compilation
 │   │   ├── llm_provider.py      # Tiered multi-provider LLM router & gateway fallback
 │   │   ├── optimizer.py         # Additive CV optimization prompts
@@ -120,7 +124,7 @@ ai-resume-analyzer/
 │   │   └── suggestions.py       # Actionable improvement advice
 │   │
 │   ├── __init__.py
-│   ├── dashboard.py             # Streamlit user interface
+│   ├── dashboard.py             # Streamlit user interface with Advanced Workflow Tools
 │   └── main.py                  # FastAPI application entry point
 │
 ├── data/
@@ -311,13 +315,25 @@ Environment variables control application defaults:
 
 ## Roadmap
 
-* [x] Multi-provider LLM backend (Google GenAI, Groq, OpenRouter, DeepSeek, OpenAI, Claude via Gateway, Ollama).
-* [x] Direct native execution with automatic gateway fallbacks.
-* [x] Streamlit user interface with real-time analysis and export features.
-* [x] Additive CV generation to prevent deletion of candidate information.
-* [x] Vector German LaTeX template rendering and local `pdflatex` compilation.
-* [ ] Automated visual diff preview (comparing original vs. optimized bullet points).
-* [ ] Bulk CV analysis mode for reviewing multiple applicants against a single job posting.
+[x] Multi-provider LLM backend (Google GenAI, Groq, OpenRouter, DeepSeek, OpenAI, Claude via Gateway, Ollama).
+
+[x] Direct native execution with automatic gateway fallbacks.
+
+[x] Streamlit user interface with real-time analysis and export features.
+
+[x] Additive CV generation to prevent deletion of candidate information.
+
+[x] Vector German LaTeX template rendering and local pdflatex compilation.
+
+[x] Automated visual diff preview (comparing original vs. optimized bullet points).
+
+[x] Bulk CV analysis mode for reviewing multiple applicants against a single job posting.
+
+[ ] Cover letter & cold email outreach generator tied to CV layout theme.
+
+[ ] Role-specific interview prep generator based on missing skill gaps.
+
+Contributing
 
 ---
 
@@ -337,4 +353,8 @@ Contributions are welcome!
 
 Distributed under the MIT License. See `LICENSE` for more information.
 
+<<<<<<< HEAD
 ```
+=======
+```
+>>>>>>> ea55850 (feat: add visual diff preview, bulk candidate screening, and updated docs)
