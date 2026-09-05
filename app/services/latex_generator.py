@@ -225,9 +225,9 @@ GERMAN_CORPORATE_LATEX_TEMPLATE = r"""
         \quad$\cdot$\quad
         \hrlink{mailto:hzindabad44@gmail.com}{hzindabad44@gmail.com}
         \quad$\cdot$\quad
-        \hrlink{[https://www.linkedin.com/in/muhammadbaqir-it](https://www.linkedin.com/in/muhammadbaqir-it)}{LinkedIn}
+        \hrlink{LINKEDIN_URL_PLACEHOLDER}{LinkedIn}
         \quad$\cdot$\quad
-        \hrlink{[https://github.com/Baqir110](https://github.com/Baqir110)}{GitHub}
+        \hrlink{GITHUB_URL_PLACEHOLDER}{GitHub}
     }
 
 \end{center}
@@ -323,9 +323,9 @@ GERMAN_ATS_LATEX_TEMPLATE = r"""
         \quad$\cdot$\quad
         \hrlink{mailto:hzindabad44@gmail.com}{hzindabad44@gmail.com}
         \quad$\cdot$\quad
-        \hrlink{[https://www.linkedin.com/in/muhammadbaqir-it](https://www.linkedin.com/in/muhammadbaqir-it)}{LinkedIn}
+        \hrlink{LINKEDIN_URL_PLACEHOLDER}{LinkedIn}
         \quad$\cdot$\quad
-        \hrlink{[https://github.com/Baqir110](https://github.com/Baqir110)}{GitHub}
+        \hrlink{GITHUB_URL_PLACEHOLDER}{GitHub}
     }
 
 \end{center}
@@ -414,9 +414,9 @@ GERMAN_CLASSIC_LATEX_TEMPLATE = r"""
         +49 152 17975480
         \quad$\cdot$\quad
         \hrlink{mailto:hzindabad44@gmail.com}{hzindabad44@gmail.com}\\
-        \hrlink{[https://www.linkedin.com/in/muhammadbaqir-it](https://www.linkedin.com/in/muhammadbaqir-it)}{LinkedIn}
+        \hrlink{LINKEDIN_URL_PLACEHOLDER}{LinkedIn}
         \quad$\cdot$\quad
-        \hrlink{[https://github.com/Baqir110](https://github.com/Baqir110)}{GitHub}
+        \hrlink{GITHUB_URL_PLACEHOLDER}{GitHub}
     }
 
 \end{center}
@@ -520,9 +520,9 @@ GERMAN_MODERN_LATEX_TEMPLATE = r"""
         \quad$\cdot$\quad
         \hrlink{mailto:hzindabad44@gmail.com}{hzindabad44@gmail.com}
         \quad$\cdot$\quad
-        \hrlink{[https://www.linkedin.com/in/muhammadbaqir-it](https://www.linkedin.com/in/muhammadbaqir-it)}{LinkedIn}
+        \hrlink{LINKEDIN_URL_PLACEHOLDER}{LinkedIn}
         \quad$\cdot$\quad
-        \hrlink{[https://github.com/Baqir110](https://github.com/Baqir110)}{GitHub}
+        \hrlink{GITHUB_URL_PLACEHOLDER}{GitHub}
     }
 
 \end{center}
@@ -620,9 +620,9 @@ INTERNATIONAL_ATS_LATEX_TEMPLATE = r"""
         \quad$\cdot$\quad
         \hrlink{mailto:hzindabad44@gmail.com}{hzindabad44@gmail.com}
         \quad$\cdot$\quad
-        \hrlink{[https://www.linkedin.com/in/muhammadbaqir-it](https://www.linkedin.com/in/muhammadbaqir-it)}{LinkedIn}
+        \hrlink{LINKEDIN_URL_PLACEHOLDER}{LinkedIn}
         \quad$\cdot$\quad
-        \hrlink{[https://github.com/Baqir110](https://github.com/Baqir110)}{GitHub}
+        \hrlink{GITHUB_URL_PLACEHOLDER}{GitHub}
     }
 
 \end{center}
@@ -649,6 +649,7 @@ def _fallback_german_latex_body(
     resume_text: str,
     missing_skills: List[str],
     layout_style: str = "german_corporate",
+    github_url: str = "https://github.com/Baqir110",
 ) -> str:
     """Generates valid LaTeX body content when LLM API providers fail."""
     filtered_skills = [
@@ -676,10 +677,19 @@ Motivated IT professional with hands-on experience in software engineering, IT s
 
 \section*{{Projects}}
 
-\projheader{{IT Infrastructure Monitoring \& AI Assistant}}{{Python, Docker, FastAPI, Prometheus}}{{[https://github.com/Baqir110](https://github.com/Baqir110)}}
+\projheader{{AI IT Operations Assistant}}{{Python, FastAPI, Docker, PostgreSQL, Redis}}{{{github_url}/ai-it-ops-assistant}}
 \begin{{itemize}}
-    \item Built and deployed backend monitoring services with Docker, PostgreSQL, and Grafana for operational metrics.
-    \item Utilized CI/CD pipelines and version control systems to ensure smooth continuous delivery.
+    \item Containerized RAG platform for automated telemetry analysis and runbook search with <200ms API latency.
+\end{{itemize}}
+
+\projheader{{IT Infrastructure Monitoring}}{{Docker, Prometheus, Grafana, Python}}{{{github_url}/it-infrastructure-monitoring}}
+\begin{{itemize}}
+    \item Integrated automated monitoring tools and CI/CD pipelines to ensure continuous system availability.
+\end{{itemize}}
+
+\projheader{{Customer Churn Analytics Service}}{{Python, Scikit-Learn, FastAPI, Streamlit}}{{{github_url}/customer-churn-analytics}}
+\begin{{itemize}}
+    \item Built end-to-end ML microservice for churn prediction with feature explanation endpoints.
 \end{{itemize}}
 
 \section*{{Education}}
@@ -712,10 +722,14 @@ Engagierter IT-Spezialist mit praktischer Erfahrung in Softwareentwicklung, IT-S
 
 \section*{{Projekte}}
 
-\projheader{{IT-Infrastruktur Monitoring \& KI-Assistenz}}{{Python, Docker, FastAPI, Prometheus}}{{[https://github.com/Baqir110](https://github.com/Baqir110)}}
+\projheader{{AI IT Operations Assistant}}{{Python, FastAPI, Docker, PostgreSQL, Redis}}{{{github_url}/ai-it-ops-assistant}}
 \begin{{itemize}}
-    \item Entwicklung und Deployment von Backend-Services mit Docker, PostgreSQL und Grafana.
-    \item Einsatz von Version Control (Git) und CI/CD-Pipelines für kontinuierliche Software-Updates.
+    \item Containerisierte RAG-Plattform zur automatisierten Telemetrie-Analyse und Runbook-Suche.
+\end{{itemize}}
+
+\projheader{{IT-Infrastruktur Monitoring}}{{Docker, Prometheus, Grafana, Python}}{{{github_url}/it-infrastructure-monitoring}}
+\begin{{itemize}}
+    \item Einbindung von Monitoring-Tools und CI/CD-Pipelines zur Erhöhung der Systemstabilität.
 \end{{itemize}}
 
 \section*{{Ausbildung}}
@@ -734,6 +748,11 @@ Engagierter IT-Spezialist mit praktischer Erfahrung in Softwareentwicklung, IT-S
 """
 
 
+# ============================================================
+# Generate LaTeX CV
+# ============================================================
+
+
 def generate_german_latex_content(
     resume_text: str,
     job_description: str,
@@ -744,6 +763,8 @@ def generate_german_latex_content(
     layout_style: str = "german_corporate",
     primary_color_hex: Optional[str] = None,
     secondary_color_hex: Optional[str] = None,
+    linkedin_url: str = "https://www.linkedin.com/in/muhammadbaqir-it",
+    github_url: str = "https://github.com/Baqir110",
 ) -> str:
     if layout_style not in CV_TEMPLATES:
         layout_style = "german_corporate"
@@ -804,14 +825,14 @@ STRICT STRUCTURAL AND CONTENT RULES:
    - Do NOT change degree titles or company names.
    - You MAY expand existing experience and project bullet points by adding technical context, missing keywords, and relevant details from the job description.
 
-3. PAGE LIMITATION COMPLIANCE:
-   - Ensure the content remains concise and fits comfortably within 1 page.
-   - Combine education entries efficiently if necessary.
+3. REPOSITORY LINKS RULE:
+   - For any project links, strictly use valid repositories under the base URL: {github_url} (e.g. {github_url}/ai-it-ops-assistant, {github_url}/it-infrastructure-monitoring, {github_url}/customer-churn-analytics, {github_url}/real-time-pipeline).
+   - Do NOT output generic placeholders like "repo-name" or "Link".
 
 4. WORK EXPERIENCE & PROJECTS:
    - Every bullet point inside \begin{{itemize}} MUST start strictly with \item.
    - Use \jobheader{{Role | Sub-role}}{{Company, City}}{{Dates}} for jobs.
-   - Use \projheader{{Project Name}}{{Tech Stack}}{{[https://github.com/Baqir110/repo-name](https://github.com/Baqir110/repo-name)}} for projects.
+   - Use \projheader{{Project Name}}{{Tech Stack}}{{{github_url}/repo-name}} for projects.
 
 5. SKILLS SECTION:
    Format inline using bold category titles:
@@ -846,9 +867,14 @@ STRICT STRUCTURAL AND CONTENT RULES:
             resume_text=resume_text,
             missing_skills=missing_skills,
             layout_style=layout_style,
+            github_url=github_url,
         )
 
     template = CV_TEMPLATES[layout_style]
+
+    # Inject dynamic candidate URLs
+    template = template.replace("LINKEDIN_URL_PLACEHOLDER", linkedin_url)
+    template = template.replace("GITHUB_URL_PLACEHOLDER", github_url)
 
     if primary_color_hex:
         template = re.sub(
