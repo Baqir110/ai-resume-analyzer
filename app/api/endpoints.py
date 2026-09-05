@@ -47,7 +47,7 @@ router = APIRouter()
 
 
 # ============================================================
-# DOCX
+# DOCX BUILDER
 # ============================================================
 
 
@@ -115,7 +115,18 @@ def build_ats_docx_resume(
 
 
 # ============================================================
-# ANALYZE
+# LIGHTWEIGHT KEEP-ALIVE HEALTH ENDPOINT
+# ============================================================
+
+
+@router.get("/health")
+async def health_check():
+    """Lightweight endpoint for keep-alive pings (Cron-Job.org / UptimeRobot)."""
+    return {"status": "ok"}
+
+
+# ============================================================
+# ANALYZE RESUME
 # ============================================================
 
 
@@ -149,7 +160,11 @@ async def analyze_resume(
         job_description,
     )
 
-    results["recommendation"] = suggest_best_cv_format(job_description)
+    # Cross-check job description and resume text for format & language recommendation
+    results["recommendation"] = suggest_best_cv_format(
+        job_description=job_description,
+        resume_text=resume_text,
+    )
 
     if results.get("missing_skills"):
 
@@ -190,7 +205,7 @@ async def analyze_resume(
 
 
 # ============================================================
-# FULL DOCX
+# FULL TAILORED DOCX GENERATION
 # ============================================================
 
 
@@ -223,7 +238,7 @@ async def generate_full_cv_endpoint(
     return StreamingResponse(
         io.BytesIO(docx_bytes),
         media_type=(
-            "application/vnd.openxmlformats-" "officedocument.wordprocessingml.document"
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ),
         headers={
             "Content-Disposition": "attachment; "
@@ -233,7 +248,7 @@ async def generate_full_cv_endpoint(
 
 
 # ============================================================
-# GERMAN PDF
+# GERMAN PDF LEBENSLAUF
 # ============================================================
 
 
@@ -290,7 +305,7 @@ async def generate_german_cv_endpoint(
 
 
 # ============================================================
-# TEX
+# GERMAN LATEX TEX SOURCE
 # ============================================================
 
 
