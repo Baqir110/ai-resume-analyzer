@@ -1,3 +1,6 @@
+Here is the updated, production-ready `README.md` reflecting your direct SDK configuration, Experiential Labs gateway fallbacks, updated dependencies (`google-genai`), vector LaTeX engine fixes, and cleaned project directory structure.
+
+```markdown
 # AI Resume & CV Optimization Hub
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
@@ -31,7 +34,7 @@
 
 ## Overview
 
-A fast microservice that evaluates resume compatibility against job descriptions, pinpoints missing keywords, and generates job-tailored CVs using configurable LLM providers (Gemini, Groq, DeepSeek, OpenAI, Claude, OpenRouter, and Ollama) alongside local `pdflatex` compilation.
+A fast microservice that evaluates resume compatibility against job descriptions, pinpoints missing keywords, and generates job-tailored CVs using configurable LLM providers (Google GenAI, Groq, DeepSeek, OpenAI, Claude via Experiential Labs Gateway, OpenRouter, and Ollama) alongside local `pdflatex` compilation.
 
 The application combines TF-IDF vector text similarity, dynamic keyword extraction, and LLM text enrichment to help candidates achieve high ATS match scores without deleting original career history, dates, or academic records.
 
@@ -40,7 +43,7 @@ The application combines TF-IDF vector text similarity, dynamic keyword extracti
 ## Use Cases
 
 - **Job Application Tailoring**: Analyze and optimize resumes against specific job descriptions before submitting applications.
-- **Multi-Format Export**: Generate clean, single-column ATS DOCX files or German `Lebenslauf` PDFs using styled LaTeX templates.
+- **Multi-Format Export**: Generate clean, single-column ATS DOCX files or German `Lebenslauf` PDFs using vector-styled LaTeX templates.
 - **Recruitment Screening**: Parse candidate documents and evaluate skill coverage against open position requirements.
 - **Skill Gap Identification**: Flag specific tools, frameworks, and domain concepts missing from a candidate's profile.
 
@@ -68,13 +71,13 @@ The application combines TF-IDF vector text similarity, dynamic keyword extracti
 ### Additive LLM Resume Optimization
 
 * **Fact-Preserving Enrichment**: Integrates missing target keywords into existing experience bullets and projects without deleting original companies, dates, or degree information.
-* **Multi-Provider Support**: Seamlessly switch between Google Gemini, Groq, OpenRouter, DeepSeek, OpenAI, Anthropic Claude, or local Ollama.
-* **Strict Output Sanitization**: Strips conversational wrappers and markdown fences from LLM responses before passing text to document generators.
+* **Multi-Provider & Gateway Support**: Seamlessly switch between Google GenAI (`google-genai`), Groq, OpenRouter, DeepSeek, OpenAI, Anthropic Claude (routed via Experiential Labs Gateway), or local Ollama.
+* **Strict Output Sanitization**: Strips conversational wrappers, markdown fences, and special LaTeX characters (`_`, `%`, `&`) from LLM responses before passing text to document generators.
 
 ### German Lebenslauf & ATS Templates
 
 * **DOCX Generation**: Produces clean, single-column Word documents optimized for Applicant Tracking Systems.
-* **LaTeX PDF Compilation**: Compiles German `Lebenslauf` documents using distinct layout templates (`Corporate Slate Navy`, `Professional ATS`, `Classic Conservative`, and `Modern Executive`).
+* **LaTeX PDF Compilation**: Compiles German `Lebenslauf` documents using vector-based layout templates (`Corporate Slate Navy`, `Professional ATS`, `Classic Conservative`, `Modern Executive`, and `HR Executive Gold`).
 
 ---
 
@@ -88,7 +91,7 @@ The application combines TF-IDF vector text similarity, dynamic keyword extracti
 | **NLP & ML** | Scikit-Learn | 1.4+ |
 | **Document Parsing** | PyPDF, Python-Docx | 4.0+ / 1.1+ |
 | **Document Compilation** | TinyTeX / TeX Live (`pdflatex`) | System-level |
-| **AI Providers** | Google GenAI, Groq, OpenRouter, DeepSeek, OpenAI, Anthropic, Requests | Latest |
+| **AI Providers** | Google GenAI (`google-genai`), Groq, OpenRouter, DeepSeek, OpenAI, Anthropic, HuggingFace Hub | Latest |
 
 ---
 
@@ -98,29 +101,50 @@ The application combines TF-IDF vector text similarity, dynamic keyword extracti
 ai-resume-analyzer/
 │
 ├── app/
-│   ├── main.py                 # FastAPI application entry point
-│   ├── dashboard.py            # Streamlit user interface
-│   │
 │   ├── api/
-│   │   └── endpoints.py        # REST routes (/analyze, /generate-full, /generate-german-cv)
+│   │   ├── __init__.py
+│   │   └── endpoints.py         # REST routes (/analyze, /generate-full, /generate-german-cv)
 │   │
 │   ├── core/
-│   │   └── config.py           # Application settings
+│   │   ├── __init__.py
+│   │   └── config.py            # Application settings & environment loader
 │   │
-│   └── services/
-│       ├── analyzer.py         # Keyword extraction, TF-IDF, and scoring logic
-│       ├── latex_generator.py  # LaTeX template rendering and pdflatex compilation
-│       ├── llm_provider.py     # Multi-provider LLM integration with output sanitization
-│       ├── optimizer.py        # Additive CV optimization prompts
-│       ├── parser.py           # Document extraction (PDF, DOCX, TXT)
-│       └── suggestions.py      # Actionable improvement advice
+│   ├── models/
+│   │   ├── __init__.py
+│   │   └── schemas.py           # Pydantic request & response models
+│   │
+│   ├── services/
+│   │   ├── __init__.py
+│   │   ├── analyzer.py          # Keyword extraction, TF-IDF, and scoring logic
+│   │   ├── latex_generator.py   # LaTeX template rendering, link fixing, and pdflatex compilation
+│   │   ├── llm_provider.py      # Tiered multi-provider LLM router & gateway fallback
+│   │   ├── optimizer.py         # Additive CV optimization prompts
+│   │   ├── parser.py            # Document extraction (PDF, DOCX, TXT)
+│   │   └── suggestions.py       # Actionable improvement advice
+│   │
+│   ├── __init__.py
+│   ├── dashboard.py             # Streamlit user interface
+│   └── main.py                  # FastAPI application entry point
 │
 ├── data/
-│   ├── skills.json             # Keyword taxonomy fallback
-│   └── llm_processing.jsonl    # Backend processing logs
+│   ├── skills.json              # Keyword taxonomy fallback
+│   └── llm_processing.jsonl     # Backend processing logs
 │
+├── images/
+│   └── arch.png                 # Architecture diagram
+│
+├── tests/
+│   ├── __init__.py
+│   ├── test_analyzer.py
+│   ├── test_api.py
+│   ├── test_gateway.py
+│   └── test_parser.py
+│
+├── .env.example
+├── .gitignore
+├── README.md
 ├── requirements.txt
-└── .env.example
+└── run.py                       # Server launcher script
 
 ```
 
@@ -139,11 +163,13 @@ ai-resume-analyzer/
 
 
 
+---
+
 ### Installation & Setup
 
 1. **Clone the repository**:
 ```bash
-git clone [https://github.com/YOUR_USERNAME/ai-resume-analyzer.git](https://github.com/YOUR_USERNAME/ai-resume-analyzer.git)
+git clone [https://github.com/Baqir110/ai-resume-analyzer.git](https://github.com/Baqir110/ai-resume-analyzer.git)
 cd ai-resume-analyzer
 
 ```
@@ -172,38 +198,48 @@ cp .env.example .env
 ```
 
 
-Add your API keys to the `.env` file for the providers you plan to use:
+Add your API keys to the `.env` file:
 ```env
+# Gateway Configuration
+OPENAI_BASE_URL=[https://api.experientiallabs.ai/v1](https://api.experientiallabs.ai/v1)
+EXPERIENTIAL_ORG_KEY=your_experiential_org_key
+DEFAULT_API_BASE=http://localhost:8000
+
+# Provider API Keys
 GEMINI_API_KEY=your_gemini_key
 GROQ_API_KEY=your_groq_key
 OPENROUTER_API_KEY=your_openrouter_key
 DEEPSEEK_API_KEY=your_deepseek_key
 OPENAI_API_KEY=your_openai_key
 ANTHROPIC_API_KEY=your_claude_key
+HF_TOKEN=your_huggingface_token
 
-# Model Defaults
+# Default Models
 GEMINI_MODEL=gemini-2.5-flash
-GROQ_MODEL=openai/gpt-oss-120b
-OPENROUTER_MODEL=deepseek/deepseek-chat
-DEEPSEEK_MODEL=deepseek-chat
-OPENAI_MODEL=gpt-4o-mini
-CLAUDE_MODEL=claude-3-5-haiku-20241022
-OLLAMA_MODEL=llama3
+GROQ_MODEL=qwen3.8-27b
+OPENROUTER_MODEL=deepseek-v4-flash
+DEEPSEEK_MODEL=deepseek-v4-flash
+OPENAI_MODEL=gpt-5.6-luna
+CLAUDE_MODEL=claude-fable-5
+OLLAMA_MODEL=qwen3.8-27b
 
-# Endpoints
-OPENROUTER_BASE_URL=[https://openrouter.ai/api/v1](https://openrouter.ai/api/v1)
-DEEPSEEK_BASE_URL=[https://api.deepseek.com](https://api.deepseek.com)
+# Paths & Endpoints
+LLM_PROCESSING_LOG=data/llm_processing.jsonl
 OLLAMA_BASE_URL=http://localhost:11434/api/generate
 
 ```
 
 
 
+---
+
 ### Running the System
 
 1. **Start the FastAPI Backend**:
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python run.py
+# Or using Uvicorn directly:
+# uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ```
 
@@ -255,34 +291,34 @@ Returns raw LaTeX code for the selected layout style.
 
 ## Configuration
 
-Environment variables controls application defaults:
+Environment variables control application defaults:
 
 | Variable | Description | Default |
 | --- | --- | --- |
 | `SKILL_TAXONOMY_PATH` | Path to the taxonomy fallback file | `./data/skills.json` |
 | `LLM_PROCESSING_LOG` | Path to JSONL request processing logs | `./data/llm_processing.jsonl` |
-| `GROQ_MODEL` | Default model for Groq integration | `openai/gpt-oss-120b` |
-| `GEMINI_MODEL` | Default model for Google Gemini integration | `gemini-2.5-flash` |
-| `OPENROUTER_BASE_URL` | Endpoint base for OpenRouter calls | `https://openrouter.ai/api/v1` |
-| `DEEPSEEK_BASE_URL` | Endpoint base for DeepSeek calls | `https://api.deepseek.com` |
+| `GEMINI_MODEL` | Default model for Google GenAI integration | `gemini-2.5-flash` |
+| `OPENAI_BASE_URL` | Experiential Labs Gateway endpoint | `https://api.experientiallabs.ai/v1` |
+| `OLLAMA_BASE_URL` | Local Ollama endpoint | `http://localhost:11434/api/generate` |
 
 ---
 
 ## Design Decisions
 
 1. **Additive Optimization Rules**: Prompts enforce additive enrichment rather than full rewrites. This guarantees that company names, degree titles, employment dates, and original project entries remain intact while integrating missing keywords.
-2. **Local LaTeX Compilation**: Generates PDFs using `pdflatex` via temporary directories, removing external PDF-generation API costs and ensuring layout consistency.
-3. **Provider Agnostic Architecture**: Abstracted `LLMService` class standardizes calls across cloud providers and local Ollama instances, implementing universal output sanitization to prevent chat responses from bleeding into output documents.
+2. **Local LaTeX Compilation**: Generates PDFs using `pdflatex` via isolated temporary directories, removing external PDF-generation API costs and ensuring vector-graphics layout consistency.
+3. **Tiered LLM Architecture**: Abstracted `LLMService` executes direct SDK calls (`google-genai`, `openai`, `anthropic`, `groq`) when native keys exist, automatically falling back to the Experiential Labs Gateway route for seamless execution.
 4. **Stateless Processing**: Processing runs statelessly on input streams, logging request metadata locally without retaining personal user documents.
 
 ---
 
 ## Roadmap
 
-* [x] Multi-provider LLM backend (Gemini, Groq, OpenRouter, DeepSeek, OpenAI, Claude, Ollama).
+* [x] Multi-provider LLM backend (Google GenAI, Groq, OpenRouter, DeepSeek, OpenAI, Claude via Gateway, Ollama).
+* [x] Direct native execution with automatic gateway fallbacks.
 * [x] Streamlit user interface with real-time analysis and export features.
 * [x] Additive CV generation to prevent deletion of candidate information.
-* [x] German LaTeX template rendering and local `pdflatex` compilation.
+* [x] Vector German LaTeX template rendering and local `pdflatex` compilation.
 * [ ] Automated visual diff preview (comparing original vs. optimized bullet points).
 * [ ] Bulk CV analysis mode for reviewing multiple applicants against a single job posting.
 
@@ -300,3 +336,10 @@ Contributions are welcome!
 
 ---
 
+## License
+
+Distributed under the MIT License. See `LICENSE` for more information.
+
+```
+
+```
