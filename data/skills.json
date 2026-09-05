@@ -3,7 +3,7 @@
     "python", "javascript", "typescript", "java", "c++", "c#", "go", "rust", "sql", "html", "css"
   ],
   "frameworks_and_libraries": [
-    "fastapi", "django", "flask", "react", "angular", "vue", "pandas", "numpy", "scikit-learn", "pytorch", "tensorflow"
+    "fastapi", "django", "flask", "react", "angular", "vue", "pandas", "numpy", "scikit-learn", "pytorch", "tensorflow", "grid-software.html"
   ],
   "devops_and_cloud": [
     "docker", "kubernetes", "aws", "azure", "gcp", "git", "github", "gitlab", "ci/cd", "terraform", "ansible"
@@ -11,7 +11,7 @@
   "databases": [
     "postgresql", "mysql", "mongodb", "redis", "sqlite", "elasticsearch"
   ],
-  "soft_skills": [
-    "leadership", "communication", "problem solving", "teamwork", "time management", "critical thinking"
+  "soft_skills_and_methods": [
+    "leadership", "communication", "problem solving", "teamwork", "time management", "critical thinking", "team-oriented", "know-how", "in-depth", "day-to-day", "hands-on", "service-oriented"
   ]
 }

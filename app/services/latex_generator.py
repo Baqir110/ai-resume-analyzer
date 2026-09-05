@@ -13,7 +13,7 @@ from app.services.llm_provider import LLMService
 
 
 def latex_escape_url(url: str) -> str:
-    """Safely prepare a URL for use as the first argument of \href."""
+    r"""Safely prepare a URL for use as the first argument of \href."""
     url = url.strip()
 
     match = re.fullmatch(r"\[([^\]]+)\]\(([^)]+)\)", url)
@@ -30,7 +30,7 @@ def latex_escape_url(url: str) -> str:
 
 
 def normalize_latex_links(text: str) -> str:
-    """Convert malformed Markdown links into safe LaTeX \hrlink commands."""
+    r"""Convert malformed Markdown links into safe LaTeX \hrlink commands."""
     malformed_hrlink = re.compile(
         r"""
         \\hrlink
@@ -139,7 +139,7 @@ def clean_body_for_latex(body_text: str) -> str:
 
 
 # ============================================================
-# 1. GERMAN CORPORATE SLATE NAVY
+# TEMPLATES
 # ============================================================
 
 GERMAN_CORPORATE_LATEX_TEMPLATE = r"""
@@ -225,9 +225,9 @@ GERMAN_CORPORATE_LATEX_TEMPLATE = r"""
         \quad$\cdot$\quad
         \hrlink{mailto:hzindabad44@gmail.com}{hzindabad44@gmail.com}
         \quad$\cdot$\quad
-        \hrlink{https://www.linkedin.com/in/muhammadbaqir-it}{LinkedIn}
+        \hrlink{[https://www.linkedin.com/in/muhammadbaqir-it](https://www.linkedin.com/in/muhammadbaqir-it)}{LinkedIn}
         \quad$\cdot$\quad
-        \hrlink{https://github.com/Baqir110}{GitHub}
+        \hrlink{[https://github.com/Baqir110](https://github.com/Baqir110)}{GitHub}
     }
 
 \end{center}
@@ -241,11 +241,6 @@ RESUME_BODY_PLACEHOLDER
 
 \end{document}
 """
-
-
-# ============================================================
-# 2. GERMAN PROFESSIONAL ATS
-# ============================================================
 
 GERMAN_ATS_LATEX_TEMPLATE = r"""
 \documentclass[10pt,a4paper]{article}
@@ -328,9 +323,9 @@ GERMAN_ATS_LATEX_TEMPLATE = r"""
         \quad$\cdot$\quad
         \hrlink{mailto:hzindabad44@gmail.com}{hzindabad44@gmail.com}
         \quad$\cdot$\quad
-        \hrlink{https://www.linkedin.com/in/muhammadbaqir-it}{LinkedIn}
+        \hrlink{[https://www.linkedin.com/in/muhammadbaqir-it](https://www.linkedin.com/in/muhammadbaqir-it)}{LinkedIn}
         \quad$\cdot$\quad
-        \hrlink{https://github.com/Baqir110}{GitHub}
+        \hrlink{[https://github.com/Baqir110](https://github.com/Baqir110)}{GitHub}
     }
 
 \end{center}
@@ -344,11 +339,6 @@ RESUME_BODY_PLACEHOLDER
 
 \end{document}
 """
-
-
-# ============================================================
-# 3. GERMAN CLASSIC
-# ============================================================
 
 GERMAN_CLASSIC_LATEX_TEMPLATE = r"""
 \documentclass[10pt,a4paper]{article}
@@ -424,9 +414,9 @@ GERMAN_CLASSIC_LATEX_TEMPLATE = r"""
         +49 152 17975480
         \quad$\cdot$\quad
         \hrlink{mailto:hzindabad44@gmail.com}{hzindabad44@gmail.com}\\
-        \hrlink{https://www.linkedin.com/in/muhammadbaqir-it}{LinkedIn}
+        \hrlink{[https://www.linkedin.com/in/muhammadbaqir-it](https://www.linkedin.com/in/muhammadbaqir-it)}{LinkedIn}
         \quad$\cdot$\quad
-        \hrlink{https://github.com/Baqir110}{GitHub}
+        \hrlink{[https://github.com/Baqir110](https://github.com/Baqir110)}{GitHub}
     }
 
 \end{center}
@@ -444,11 +434,6 @@ RESUME_BODY_PLACEHOLDER
 
 \end{document}
 """
-
-
-# ============================================================
-# 4. GERMAN MODERN
-# ============================================================
 
 GERMAN_MODERN_LATEX_TEMPLATE = r"""
 \documentclass[10pt,a4paper]{article}
@@ -535,9 +520,9 @@ GERMAN_MODERN_LATEX_TEMPLATE = r"""
         \quad$\cdot$\quad
         \hrlink{mailto:hzindabad44@gmail.com}{hzindabad44@gmail.com}
         \quad$\cdot$\quad
-        \hrlink{https://www.linkedin.com/in/muhammadbaqir-it}{LinkedIn}
+        \hrlink{[https://www.linkedin.com/in/muhammadbaqir-it](https://www.linkedin.com/in/muhammadbaqir-it)}{LinkedIn}
         \quad$\cdot$\quad
-        \hrlink{https://github.com/Baqir110}{GitHub}
+        \hrlink{[https://github.com/Baqir110](https://github.com/Baqir110)}{GitHub}
     }
 
 \end{center}
@@ -551,11 +536,6 @@ RESUME_BODY_PLACEHOLDER
 
 \end{document}
 """
-
-
-# ============================================================
-# 5. INTERNATIONAL ATS
-# ============================================================
 
 INTERNATIONAL_ATS_LATEX_TEMPLATE = r"""
 \documentclass[10pt,a4paper]{article}
@@ -640,9 +620,9 @@ INTERNATIONAL_ATS_LATEX_TEMPLATE = r"""
         \quad$\cdot$\quad
         \hrlink{mailto:hzindabad44@gmail.com}{hzindabad44@gmail.com}
         \quad$\cdot$\quad
-        \hrlink{https://www.linkedin.com/in/muhammadbaqir-it}{LinkedIn}
+        \hrlink{[https://www.linkedin.com/in/muhammadbaqir-it](https://www.linkedin.com/in/muhammadbaqir-it)}{LinkedIn}
         \quad$\cdot$\quad
-        \hrlink{https://github.com/Baqir110}{GitHub}
+        \hrlink{[https://github.com/Baqir110](https://github.com/Baqir110)}{GitHub}
     }
 
 \end{center}
@@ -652,11 +632,6 @@ RESUME_BODY_PLACEHOLDER
 \end{document}
 """
 
-
-# ============================================================
-# Template registry
-# ============================================================
-
 CV_TEMPLATES = {
     "german_corporate": GERMAN_CORPORATE_LATEX_TEMPLATE,
     "german_ats": GERMAN_ATS_LATEX_TEMPLATE,
@@ -665,10 +640,98 @@ CV_TEMPLATES = {
     "international_ats": INTERNATIONAL_ATS_LATEX_TEMPLATE,
 }
 
+# ============================================================
+# Local Fallback LaTeX Generator
+# ============================================================
 
-# ============================================================
-# Generate LaTeX CV
-# ============================================================
+
+def _fallback_german_latex_body(
+    resume_text: str,
+    missing_skills: List[str],
+    layout_style: str = "german_corporate",
+) -> str:
+    """Generates valid LaTeX body content when LLM API providers fail."""
+    filtered_skills = [
+        s for s in missing_skills if not s.lower().startswith(("http", "www."))
+    ]
+    skills_formatted = (
+        ", ".join(filtered_skills)
+        if filtered_skills
+        else "Python, SQL, Docker, Linux, Git"
+    )
+
+    if layout_style == "international_ats":
+        return rf"""
+\section*{{Professional Summary}}
+Motivated IT professional with hands-on experience in software engineering, IT support, infrastructure automation, and data systems. Proven ability to apply technical know-how to deliver reliable software and optimize day-to-day operations.
+
+\section*{{Professional Experience}}
+
+\jobheader{{IT Support Engineer \& Data Specialist}}{{Parkyeri \& Hexagon Helix}}{{Istanbul, Turkey}}
+\begin{{itemize}}
+    \item Provided technical system support, troubleshooting, and database maintenance across server environments.
+    \item Applied in-depth problem-solving skills to manage day-to-day system health and resolve operational issues efficiently.
+    \item Collaborated in a team-oriented setting to deploy and maintain software services.
+\end{{itemize}}
+
+\section*{{Projects}}
+
+\projheader{{IT Infrastructure Monitoring \& AI Assistant}}{{Python, Docker, FastAPI, Prometheus}}{{[https://github.com/Baqir110](https://github.com/Baqir110)}}
+\begin{{itemize}}
+    \item Built and deployed backend monitoring services with Docker, PostgreSQL, and Grafana for operational metrics.
+    \item Utilized CI/CD pipelines and version control systems to ensure smooth continuous delivery.
+\end{{itemize}}
+
+\section*{{Education}}
+
+\jobheader{{M.Sc. in International Software Systems Science}}{{Otto-Friedrich-Universität Bamberg}}{{Oct 2024 -- Present}}
+\jobheader{{B.Sc. in Computer Engineering}}{{Istanbul Okan University}}{{Graduated}}
+
+\section*{{Technical Skills}}
+
+\textbf{{Core Technical Skills:}} Python, Java, SQL, HTML, FastAPI, Docker, PostgreSQL, Redis, Prometheus, Grafana, Git \\
+\textbf{{Integrated Job Keywords:}} {skills_formatted}
+
+\section*{{Languages \& Certifications}}
+
+\textbf{{Languages:}} English (IELTS 8.0), German, Turkish, Urdu, Sindhi
+"""
+    else:
+        return rf"""
+\section*{{Profil}}
+Engagierter IT-Spezialist mit praktischer Erfahrung in Softwareentwicklung, IT-Support, Infrastruktur-Automatisierung und Datenbanksystemen. Erfahren in der Anwendung von fundiertem Know-how zur Optimierung alltäglicher Systemabläufe.
+
+\section*{{Berufserfahrung}}
+
+\jobheader{{IT Support Engineer \& Data Specialist}}{{Parkyeri \& Hexagon Helix}}{{Istanbul, Türkei}}
+\begin{{itemize}}
+    \item Durchführung von technischem Support, Systemwartung und Fehlerbehebung in Serverumgebungen.
+    \item Anwendung von in-depth Lösungsansätzen im täglichen Betrieb zur Sicherstellung hoher Systemverfügbarkeit.
+    \item Erfolgreiche Zusammenarbeit in teamorientierten Agile-Prozessen zur Bereitstellung von Softwarelösungen.
+\end{{itemize}}
+
+\section*{{Projekte}}
+
+\projheader{{IT-Infrastruktur Monitoring \& KI-Assistenz}}{{Python, Docker, FastAPI, Prometheus}}{{[https://github.com/Baqir110](https://github.com/Baqir110)}}
+\begin{{itemize}}
+    \item Entwicklung und Deployment von Backend-Services mit Docker, PostgreSQL und Grafana.
+    \item Einsatz von Version Control (Git) und CI/CD-Pipelines für kontinuierliche Software-Updates.
+\end{{itemize}}
+
+\section*{{Ausbildung}}
+
+\jobheader{{M.Sc. International Software Systems Science}}{{Otto-Friedrich-Universität Bamberg}}{{Seit Okt 2024}}
+\jobheader{{B.Sc. Computer Engineering}}{{Istanbul Okan University}}{{Abschluss}}
+
+\section*{{Kenntnisse}}
+
+\textbf{{Technische Kenntnisse:}} Python, Java, SQL, HTML, FastAPI, Docker, PostgreSQL, Redis, Prometheus, Grafana, Git \\
+\textbf{{Integrierte Schlüsselbegriffe:}} {skills_formatted}
+
+\section*{{Sprachen \& Zertifikate}}
+
+\textbf{{Sprachen:}} Englisch (IELTS 8.0), Deutsch, Türkisch, Urdu, Sindhi
+"""
 
 
 def generate_german_latex_content(
@@ -748,7 +811,7 @@ STRICT STRUCTURAL AND CONTENT RULES:
 4. WORK EXPERIENCE & PROJECTS:
    - Every bullet point inside \begin{{itemize}} MUST start strictly with \item.
    - Use \jobheader{{Role | Sub-role}}{{Company, City}}{{Dates}} for jobs.
-   - Use \projheader{{Project Name}}{{Tech Stack}}{{https://github.com/Baqir110/repo-name}} for projects.
+   - Use \projheader{{Project Name}}{{Tech Stack}}{{[https://github.com/Baqir110/repo-name](https://github.com/Baqir110/repo-name)}} for projects.
 
 5. SKILLS SECTION:
    Format inline using bold category titles:
@@ -769,15 +832,21 @@ STRICT STRUCTURAL AND CONTENT RULES:
 8. Return RAW LaTeX body content ONLY (No code fences, markdown, or conversational text).
 """
 
-    raw_latex = LLMService.generate(
-        prompt=prompt,
-        provider=provider,
-        model_name=model_name,
-        api_key=api_key,
-    )
-
-    clean_body = clean_llm_response_to_latex(raw_latex)
-    clean_body = clean_body_for_latex(clean_body)
+    try:
+        raw_latex = LLMService.generate(
+            prompt=prompt,
+            provider=provider,
+            model_name=model_name,
+            api_key=api_key,
+        )
+        clean_body = clean_llm_response_to_latex(raw_latex)
+        clean_body = clean_body_for_latex(clean_body)
+    except Exception:
+        clean_body = _fallback_german_latex_body(
+            resume_text=resume_text,
+            missing_skills=missing_skills,
+            layout_style=layout_style,
+        )
 
     template = CV_TEMPLATES[layout_style]
 

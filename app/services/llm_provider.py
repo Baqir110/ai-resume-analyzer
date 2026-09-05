@@ -367,6 +367,7 @@ class LLMService:
             "deepseek",
             "openai",
             "claude",
+            "ollama",
         ]
 
         # Deduplicate preserving order
@@ -384,9 +385,8 @@ class LLMService:
                 if current_provider != "ollama":
                     env_key = PROVIDER_ENV_KEYS.get(current_provider)
                     if not env_key or not os.getenv(env_key, "").strip():
-                        if current_provider == primary_provider and not api_key:
-                            continue
-                        elif not api_key:
+                        if not api_key:
+                            last_error = f"{current_provider}: no API key configured"
                             continue
 
                 _write_log(
