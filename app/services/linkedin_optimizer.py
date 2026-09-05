@@ -28,10 +28,9 @@ RESUME:
 {resume_text}
 """
 
-        raw_response = LLMService.generate_response(
+        raw_response = LLMService.call_llm(
             prompt=prompt,
             provider=provider,
-            temperature=0.3,
         )
 
         try:

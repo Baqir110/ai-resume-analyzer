@@ -70,7 +70,7 @@ class TrackerStatusUpdate(BaseModel):
 # ============================================================
 
 
-@router.post("/resume/diff-preview")
+@router.post("/diff-preview")
 async def diff_preview(payload: BulletDiffRequest):
     try:
         diffs = DiffPreviewService.compare_bullet_lists(
@@ -81,7 +81,7 @@ async def diff_preview(payload: BulletDiffRequest):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@router.post("/resume/analyze-bulk")
+@router.post("/analyze-bulk")
 async def analyze_bulk(
     job_description: str = Form(...),
     resume_files: List[UploadFile] = File(...),
@@ -113,7 +113,7 @@ async def analyze_bulk(
 # ============================================================
 
 
-@router.post("/resume/audit-matrix")
+@router.post("/audit-matrix")
 async def audit_matrix_endpoint(
     job_description: str = Form(...),
     resume_file: UploadFile = File(...),
@@ -136,7 +136,7 @@ async def audit_matrix_endpoint(
 # ============================================================
 
 
-@router.post("/resume/generate-cover-letter")
+@router.post("/generate-cover-letter")
 async def generate_cover_letter_endpoint(
     job_description: str = Form(...),
     resume_file: UploadFile = File(...),
@@ -163,7 +163,7 @@ async def generate_cover_letter_endpoint(
 # ============================================================
 
 
-@router.post("/resume/interview-prep")
+@router.post("/interview-prep")
 async def interview_prep_endpoint(
     job_description: str = Form(...),
     resume_file: UploadFile = File(...),
@@ -190,7 +190,7 @@ async def interview_prep_endpoint(
 # ============================================================
 
 
-@router.post("/resume/linkedin-optimize")
+@router.post("/linkedin-optimize")
 async def linkedin_optimize_endpoint(
     resume_file: UploadFile = File(...),
     target_role: Optional[str] = Form("Software Engineer"),

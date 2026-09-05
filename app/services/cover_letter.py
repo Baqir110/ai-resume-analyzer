@@ -45,22 +45,23 @@ class CoverLetterService:
         selected_tone = tone_instructions.get(tone.lower(), tone_instructions["formal"])
 
         prompt = f"""
-You are an expert executive resume writer and career coach.
-Analyze the following RESUME and JOB DESCRIPTION to create tailored outreach materials for {company_name}.
+Write a tailored cover letter and a cold email for {company_name}.
 
-Tone/Style Requirement: {selected_tone}
+Style guidelines:
+- Write like a real person, not an AI template.
+- Use simple, active language. State facts, achievements, and technical stack clearly without exaggerating.
+- Avoid clichés like "I am writing to express my enthusiastic interest" or "my proven track record."
 
-Task 1: COVER LETTER
-Write a compelling 3-paragraph cover letter:
-- Paragraph 1: High-impact opening connecting candidate experience to the target role at {company_name}.
-- Paragraph 2: Core technical achievements and specific alignment with job requirements.
-- Paragraph 3: Strategic closing statement with a confident call to action.
+Task 1: COVER LETTER (3 concise paragraphs)
+- Paragraph 1: Direct opening about the candidate's background and alignment with {company_name}.
+- Paragraph 2: Key technical work, concrete projects, and tools used.
+- Paragraph 3: Brief, confident closing and call to action.
 
-Task 2: COLD OUTREACH MESSAGE
-Write a concise, 120-150 word LinkedIn message or cold email to the hiring manager. Focus on direct value creation.
+Task 2: COLD OUTREACH MESSAGE (100-150 words)
+- A short, direct LinkedIn message to a hiring manager or tech lead highlighting key fit.
 
 CRITICAL OUTPUT FORMAT:
-Return EXACTLY two sections separated by "---SECTION_BREAK---". Do not add introductory markdown text.
+Return EXACTLY two sections separated by "---SECTION_BREAK---".
 
 [COVER LETTER CONTENT]
 ---SECTION_BREAK---
@@ -72,20 +73,14 @@ RESUME:
 JOB DESCRIPTION:
 {job_description}
 """
-
-        raw_response = LLMService.generate_response(
+        raw_response = LLMService.call_llm(
             prompt=prompt,
             provider=provider,
-            temperature=0.3,
         )
 
         parts = raw_response.split("---SECTION_BREAK---")
         cover_letter_body = parts[0].strip() if len(parts) > 0 else raw_response.strip()
-        cold_outreach_body = (
-            parts[1].strip()
-            if len(parts) > 1
-            else "Outreach message generation unavailable."
-        )
+        cold_outreach_body = parts[1].strip() if len(parts) > 1 else "Outreach message generation unavailable."
 
         # Compile matching LaTeX Source
         tex_source = cls._build_latex_cover_letter(cover_letter_body, company_name)
