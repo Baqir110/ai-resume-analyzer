@@ -179,9 +179,11 @@ class LLMService:
 
     DEFAULT_MODELS = DEFAULT_MODELS
     SUPPORTED_PROVIDERS = SUPPORTED_PROVIDERS
-    
+
     @classmethod
-    def call_llm(cls, prompt: str, provider: str = "gemini", model_name: str = None) -> str:
+    def call_llm(
+        cls, prompt: str, provider: str = "gemini", model_name: str = None
+    ) -> str:
         """Universal wrapper to handle LLM generation requests."""
         # Check existing class methods dynamically
         if hasattr(cls, "generate"):
@@ -192,7 +194,7 @@ class LLMService:
             return cls.query(prompt=prompt, provider=provider)
         else:
             raise AttributeError("LLMService has no valid text generation method.")
-        
+
     @classmethod
     def get_default_model(cls, provider: str) -> str:
         provider = (provider or "gemini").strip().lower()

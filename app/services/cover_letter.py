@@ -80,7 +80,11 @@ JOB DESCRIPTION:
 
         parts = raw_response.split("---SECTION_BREAK---")
         cover_letter_body = parts[0].strip() if len(parts) > 0 else raw_response.strip()
-        cold_outreach_body = parts[1].strip() if len(parts) > 1 else "Outreach message generation unavailable."
+        cold_outreach_body = (
+            parts[1].strip()
+            if len(parts) > 1
+            else "Outreach message generation unavailable."
+        )
 
         # Compile matching LaTeX Source
         tex_source = cls._build_latex_cover_letter(cover_letter_body, company_name)
