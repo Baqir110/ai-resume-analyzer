@@ -23,6 +23,7 @@ from app.services.cover_letter import CoverLetterService
 from app.services.diff_preview import DiffPreviewService
 from app.services.interview_prep import InterviewPrepService
 from app.services.latex_generator import (
+    FactualValidationError,
     compile_latex_to_pdf,
     generate_german_latex_content,
 )
@@ -475,14 +476,23 @@ async def generate_german_cv_endpoint(
 
     missing_skills = analysis.get("missing_skills") or []
 
-    latex_code = generate_german_latex_content(
-        resume_text=resume_text,
-        job_description=job_description,
-        missing_skills=missing_skills,
-        provider=provider or "gemini",
-        model_name=model_name,
-        layout_style=selected_style,
-    )
+    try:
+        latex_code = generate_german_latex_content(
+            resume_text=resume_text,
+            job_description=job_description,
+            missing_skills=missing_skills,
+            provider=provider or "gemini",
+            model_name=model_name,
+            layout_style=selected_style,
+        )
+    except FactualValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "factual_validation_failed",
+                "violations": exc.violations,
+            },
+        ) from exc
 
     try:
         pdf_bytes = compile_latex_to_pdf(latex_code)
@@ -535,14 +545,23 @@ async def generate_tex_cv_endpoint(
 
     missing_skills = analysis.get("missing_skills") or []
 
-    latex_code = generate_german_latex_content(
-        resume_text=resume_text,
-        job_description=job_description,
-        missing_skills=missing_skills,
-        provider=provider or "gemini",
-        model_name=model_name,
-        layout_style=selected_style,
-    )
+    try:
+        latex_code = generate_german_latex_content(
+            resume_text=resume_text,
+            job_description=job_description,
+            missing_skills=missing_skills,
+            provider=provider or "gemini",
+            model_name=model_name,
+            layout_style=selected_style,
+        )
+    except FactualValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "factual_validation_failed",
+                "violations": exc.violations,
+            },
+        ) from exc
 
     return StreamingResponse(
         io.BytesIO(latex_code.encode("utf-8")),

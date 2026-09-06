@@ -2,10 +2,181 @@ import re
 import shutil
 import subprocess
 import tempfile
+import unicodedata
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from app.services.llm_provider import LLMService
+
+
+GERMAN_MINIMAL_ATS = "german_minimal_ats"
+
+
+class FactualValidationError(ValueError):
+    """Raised when generated CV content cannot be proven faithful to its source."""
+
+    def __init__(self, violations: List[str]):
+        self.violations = violations
+        super().__init__("; ".join(violations))
+
+
+def _normalize_fact(value: str) -> str:
+    """Normalize display-only differences while retaining a fact's meaning."""
+    value = value.replace(r"\&", "&").replace(r"\_", "_")
+    value = re.sub(r"\\[A-Za-z]+\*?(?:\[[^]]*\])?", " ", value)
+    value = value.replace("{", " ").replace("}", " ")
+    value = unicodedata.normalize("NFKD", value)
+    value = "".join(char for char in value if not unicodedata.combining(char))
+    value = re.sub(r"[^a-zA-Z0-9]+", " ", value.casefold())
+    return " ".join(value.split())
+
+
+def _escape_latex_text(value: str) -> str:
+    """Escape plain resume text for a LaTeX header."""
+    return (
+        value.replace("\\", r"\textbackslash{}")
+        .replace("&", r"\&")
+        .replace("%", r"\%")
+        .replace("_", r"\_")
+        .replace("#", r"\#")
+        .replace("$", r"\$")
+        .replace("{", r"\{")
+        .replace("}", r"\}")
+    )
+
+
+def _section_lines(resume_text: str, headings: List[str]) -> List[str]:
+    """Return lines in a labelled resume section, stopping at the next heading."""
+    lines = [line.strip() for line in resume_text.splitlines() if line.strip()]
+    start = None
+    heading_set = {heading.casefold() for heading in headings}
+    all_headings = {
+        "experience", "work experience", "professional experience",
+        "berufserfahrung", "employment history", "education", "ausbildung",
+        "academic background", "qualifications", "projects", "skills",
+        "kenntnisse", "languages", "sprachen",
+    }
+    for index, line in enumerate(lines):
+        if line.rstrip(":").casefold() in heading_set:
+            start = index + 1
+            break
+    if start is None:
+        return []
+    result = []
+    for line in lines[start:]:
+        if line.rstrip(":").casefold() in all_headings:
+            break
+        result.append(line)
+    return result
+
+
+_DATE_RE = re.compile(
+    r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|"
+    r"dec(?:ember)?|januar|februar|märz|maerz|april|mai|juni|juli|august|"
+    r"september|oktober|november|dezember)?\s*\d{4}\s*(?:-|–|—|to|bis)\s*"
+    r"(?:present|current|heute|\d{4})\b|\b\d{4}\s*(?:-|–|—|to|bis)\s*"
+    r"(?:present|current|heute|\d{4})\b",
+    re.IGNORECASE,
+)
+_DEGREE_RE = re.compile(
+    r"\b(?:b\.?\s?sc\.?|m\.?\s?sc\.?|bachelor(?:'s)?|master(?:'s)?|"
+    r"ph\.?d\.?|diplom|staatsexamen)\b",
+    re.IGNORECASE,
+)
+
+
+def extract_resume_invariants(resume_text: str) -> List[str]:
+    """Extract unambiguous career facts that every German Minimal ATS CV must retain."""
+    experience = _section_lines(
+        resume_text,
+        ["Experience", "Work Experience", "Professional Experience", "Berufserfahrung", "Employment History"],
+    )
+    education = _section_lines(
+        resume_text,
+        ["Education", "Ausbildung", "Academic Background", "Qualifications"],
+    )
+    invariants: List[str] = []
+
+    if experience and not any(_DATE_RE.search(line) for line in experience):
+        raise FactualValidationError([
+            "Could not unambiguously extract career facts from the Experience section."
+        ])
+
+    for line in experience:
+        if not _DATE_RE.search(line):
+            continue
+        parts = [part.strip() for part in re.split(r"\s*(?:\||—|–)\s*", line) if part.strip()]
+        dated_parts = [part for part in parts if _DATE_RE.search(part)]
+        factual_parts = [part for part in parts if not _DATE_RE.search(part)]
+        if len(factual_parts) < 2 or not dated_parts:
+            raise FactualValidationError([f"Could not unambiguously extract role, company, and dates from: {line}"])
+        invariants.extend([factual_parts[0], factual_parts[1], dated_parts[0]])
+
+    for line in education:
+        if _DEGREE_RE.search(line):
+            invariants.append(line)
+
+    if not invariants:
+        raise FactualValidationError([
+            "Could not extract career invariants. Use labelled Experience and Education sections with role, company, and dates."
+        ])
+
+    return list(dict.fromkeys(invariants))
+
+
+def extract_candidate_header(resume_text: str) -> Dict[str, str]:
+    """Extract a conservative, user-owned header for the new layout."""
+    lines = [line.strip() for line in resume_text.splitlines() if line.strip()]
+    name = next(
+        (
+            line for line in lines[:5]
+            if re.fullmatch(r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ .'-]{1,80}", line)
+            and "resume" not in line.casefold()
+            and "lebenslauf" not in line.casefold()
+        ),
+        "",
+    )
+    if not name:
+        raise FactualValidationError(["Could not extract a candidate name for the CV header."])
+
+    email_match = re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", resume_text)
+    phone_match = re.search(r"(?:\+?\d[\d ()/-]{6,}\d)", resume_text)
+    links = re.findall(r"https?://[^\s)]+", resume_text)
+    return {
+        "name": name,
+        "email": email_match.group(0) if email_match else "",
+        "phone": phone_match.group(0) if phone_match else "",
+        "linkedin": next((link for link in links if "linkedin.com" in link.casefold()), ""),
+        "github": next((link for link in links if "github.com" in link.casefold()), ""),
+    }
+
+
+def validate_generated_invariants(latex_code: str, invariants: List[str]) -> None:
+    """Reject a document that does not contain every source career invariant."""
+    normalized_output = _normalize_fact(latex_code)
+    missing = [
+        fact for fact in invariants
+        if _normalize_fact(fact) not in normalized_output
+    ]
+    if missing:
+        raise FactualValidationError([
+            f"Generated CV is missing or alters: {fact}" for fact in missing
+        ])
+
+
+def _render_candidate_contact(header: Dict[str, str]) -> str:
+    parts = []
+    if header["email"]:
+        email = _escape_latex_text(header["email"])
+        parts.append(rf"\href{{mailto:{header['email']}}}{{{email}}}")
+    if header["phone"]:
+        parts.append(_escape_latex_text(header["phone"]))
+    if header["linkedin"]:
+        parts.append(rf"\href{{\detokenize{{{latex_escape_url(header['linkedin'])}}}}}{{LinkedIn}}")
+    if header["github"]:
+        parts.append(rf"\href{{\detokenize{{{latex_escape_url(header['github'])}}}}}{{GitHub}}")
+    return r" \quad$\cdot$\quad ".join(parts)
 
 # ============================================================
 # LaTeX helpers
@@ -837,11 +1008,48 @@ RESUME_BODY_PLACEHOLDER
 \end{document}
 """
 
+GERMAN_MINIMAL_ATS_LATEX_TEMPLATE = r"""
+\documentclass[10pt,a4paper]{article}
+
+\usepackage[top=1.25cm,bottom=1.25cm,left=1.6cm,right=1.6cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{hyperref}
+
+\definecolor{primary}{HTML}{0F172A}
+\definecolor{subgray}{HTML}{475569}
+\hypersetup{colorlinks=true,urlcolor=primary,pdfborder={0 0 0}}
+\titleformat{\section}{\large\bfseries\color{primary}}{}{0em}{}[\vspace{-3pt}\color{subgray}\rule{\textwidth}{0.5pt}]
+\titlespacing{\section}{0pt}{8pt}{3pt}
+\setlist[itemize]{leftmargin=1.2em,itemsep=1pt,topsep=1pt,parsep=0pt}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{1pt}
+\newcommand{\jobheader}[3]{\noindent\textbf{\color{primary}#1}, #2\hfill\textit{\color{subgray}#3}\par\vspace{1pt}}
+\newcommand{\degreeheader}[3]{\jobheader{#1}{#2}{#3}}
+\newcommand{\projheader}[3]{\noindent\textbf{\color{primary}#1}\ifx\relax#2\relax\else\textit{\color{subgray}(#2)}\fi\ifx\relax#3\relax\else\hfill\href{\detokenize{#3}}{GitHub}\fi\par\vspace{1pt}}
+\pagestyle{empty}
+
+\begin{document}
+\begin{center}
+{\Huge\bfseries\color{primary} CANDIDATE_NAME_PLACEHOLDER}\\[3pt]
+{\small\color{subgray} CANDIDATE_CONTACT_PLACEHOLDER}
+\end{center}
+
+RESUME_BODY_PLACEHOLDER
+\end{document}
+"""
+
 CV_TEMPLATES = {
     "german_corporate": GERMAN_CORPORATE_LATEX_TEMPLATE,
     "german_ats": GERMAN_ATS_LATEX_TEMPLATE,
     "german_classic": GERMAN_CLASSIC_LATEX_TEMPLATE,
     "german_modern": GERMAN_MODERN_LATEX_TEMPLATE,
+    GERMAN_MINIMAL_ATS: GERMAN_MINIMAL_ATS_LATEX_TEMPLATE,
     "international_ats": INTERNATIONAL_ATS_LATEX_TEMPLATE,
     "standard": STANDARD_LATEX_TEMPLATE,
     "hr_executive_gold": HR_EXECUTIVE_GOLD_LATEX_TEMPLATE,
@@ -976,6 +1184,10 @@ def generate_german_latex_content(
     if layout_style not in CV_TEMPLATES:
         layout_style = "german_corporate"
 
+    is_german_minimal_ats = layout_style == GERMAN_MINIMAL_ATS
+    invariants = extract_resume_invariants(resume_text) if is_german_minimal_ats else []
+    candidate_header = extract_candidate_header(resume_text) if is_german_minimal_ats else {}
+
     if layout_style in ("international_ats", "standard", "hr_executive_gold"):
         section_names = (
             "\\section*{Professional Summary}\n\n"
@@ -1059,7 +1271,11 @@ STRICT STRUCTURAL AND CONTENT RULES:
         )
         clean_body = clean_llm_response_to_latex(raw_latex)
         clean_body = clean_body_for_latex(clean_body)
-    except Exception:
+    except Exception as exc:
+        if is_german_minimal_ats:
+            raise FactualValidationError([
+                "German Minimal ATS generation failed before factual validation; no CV was produced."
+            ]) from exc
         clean_body = _fallback_german_latex_body(
             resume_text=resume_text,
             missing_skills=missing_skills,
@@ -1072,6 +1288,16 @@ STRICT STRUCTURAL AND CONTENT RULES:
     # Inject dynamic candidate URLs
     template = template.replace("LINKEDIN_URL_PLACEHOLDER", linkedin_url)
     template = template.replace("GITHUB_URL_PLACEHOLDER", github_url)
+
+    if is_german_minimal_ats:
+        template = template.replace(
+            "CANDIDATE_NAME_PLACEHOLDER",
+            _escape_latex_text(candidate_header["name"]),
+        )
+        template = template.replace(
+            "CANDIDATE_CONTACT_PLACEHOLDER",
+            _render_candidate_contact(candidate_header),
+        )
 
     if primary_color_hex:
         template = re.sub(
@@ -1087,10 +1313,13 @@ STRICT STRUCTURAL AND CONTENT RULES:
             template,
         )
 
-    return template.replace(
+    latex_code = template.replace(
         "RESUME_BODY_PLACEHOLDER",
         clean_body,
     )
+    if is_german_minimal_ats:
+        validate_generated_invariants(latex_code, invariants)
+    return latex_code
 
 
 # ============================================================

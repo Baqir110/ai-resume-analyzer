@@ -55,6 +55,7 @@ DEFAULT_MODELS = {
 TEMPLATE_LABELS = {
     "hr_executive_gold": "HR Gold Standard (Executive)",
     "german_corporate": "Corporate Slate Navy",
+    "german_minimal_ats": "German Minimal ATS (Single-Column)",
     "german_modern": "Modern Two-Column",
     "german_classic": "German Classic Single-Column PDF",
     "international_ats": "International English ATS",
