@@ -33,6 +33,8 @@ _GERMAN_LAYOUTS = {
 }
 _ENGLISH_LAYOUTS = {
     "international_ats",
+    "academic",
+    "technical_lead",
     "standard",
     "hr_executive_gold",
 }

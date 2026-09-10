@@ -1,5 +1,7 @@
 import re
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
+from app.services.career.cover_letter_templates import get_template
 from app.services.llm.provider import LLMService
 
 
@@ -31,36 +33,62 @@ class CoverLetterService:
         job_description: str,
         company_name: str = "Target Company",
         tone: str = "formal",
+        template: Optional[str] = "classic_professional",
         provider: str = "gemini",
     ) -> Dict[str, Any]:
         """
-        Generates a 3-paragraph cover letter, a 150-word cold email, and raw LaTeX source.
+        Generates a cover letter, a cold outreach email, and raw LaTeX source.
+
+        The `template` parameter selects the letter structure:
+          - classic_professional — formal, three-paragraph, safe for enterprises
+          - modern_concise       — short, direct, tech-friendly
+          - story_driven         — narrative arc, opens with a specific moment
+          - value_first          — metric-first, senior IC framing
         """
+        template_def = get_template(template)
+        template_snippet = template_def["snippet"].strip()
+
         tone_instructions = {
             "formal": "Professional, executive, and structured.",
             "startup": "Conversational, enthusiastic, outcome-driven, and engaging.",
-            "technical": "Direct, deep technical emphasis on architecture, tools, and quantifiable achievements.",
+            "technical": (
+                "Direct, deep technical emphasis on architecture, tools, and "
+                "quantifiable achievements."
+            ),
         }
 
-        selected_tone = tone_instructions.get(tone.lower(), tone_instructions["formal"])
+        selected_tone = tone_instructions.get(
+            tone.lower(), tone_instructions["formal"]
+        )
 
         prompt = f"""
 Write a tailored cover letter and a cold email for {company_name}.
 
-Style guidelines:
+STYLE GUIDELINES
+----------------
 - Write like a real person, not an AI template.
-- Use simple, active language. State facts, achievements, and technical stack clearly without exaggerating.
-- Avoid clichés like "I am writing to express my enthusiastic interest" or "my proven track record."
+- Use simple, active language. State facts, achievements, and technical
+  stack clearly without exaggerating.
+- Avoid clichés like "I am writing to express my enthusiastic interest"
+  or "my proven track record."
+- Tone: {selected_tone}
 
-Task 1: COVER LETTER (3 concise paragraphs)
-- Paragraph 1: Direct opening about the candidate's background and alignment with {company_name}.
-- Paragraph 2: Key technical work, concrete projects, and tools used.
-- Paragraph 3: Brief, confident closing and call to action.
+LETTER STRUCTURE — {template_def['label']}
+{template_def['description']}
 
-Task 2: COLD OUTREACH MESSAGE (100-150 words)
-- A short, direct LinkedIn message to a hiring manager or tech lead highlighting key fit.
+{template_snippet}
 
-CRITICAL OUTPUT FORMAT:
+TASK 1 — COVER LETTER
+Follow the structure instructions above exactly. Match the requested
+length. Do not exceed it.
+
+TASK 2 — COLD OUTREACH MESSAGE (100-150 words)
+A short, direct LinkedIn message to a hiring manager or tech lead
+highlighting key fit. Reference one specific accomplishment from the
+resume.
+
+CRITICAL OUTPUT FORMAT
+----------------------
 Return EXACTLY two sections separated by "---SECTION_BREAK---".
 
 [COVER LETTER CONTENT]
@@ -73,25 +101,29 @@ RESUME:
 JOB DESCRIPTION:
 {job_description}
 """
+
         raw_response = LLMService.call_llm(
             prompt=prompt,
             provider=provider,
         )
 
         parts = raw_response.split("---SECTION_BREAK---")
-        cover_letter_body = parts[0].strip() if len(parts) > 0 else raw_response.strip()
+        cover_letter_body = (
+            parts[0].strip() if len(parts) > 0 else raw_response.strip()
+        )
         cold_outreach_body = (
             parts[1].strip()
             if len(parts) > 1
             else "Outreach message generation unavailable."
         )
 
-        # Compile matching LaTeX Source
         tex_source = cls._build_latex_cover_letter(cover_letter_body, company_name)
 
         return {
             "company_name": company_name,
             "tone": tone,
+            "template": template or "classic_professional",
+            "template_label": template_def["label"],
             "cover_letter": cover_letter_body,
             "cold_outreach": cold_outreach_body,
             "latex_source": tex_source,
@@ -99,7 +131,9 @@ JOB DESCRIPTION:
 
     @staticmethod
     def _build_latex_cover_letter(body_text: str, company_name: str) -> str:
-        safe_body = _escape_latex(body_text).replace("\n\n", "\n\n\\vspace{0.8em}\n")
+        safe_body = _escape_latex(body_text).replace(
+            "\n\n", "\n\n\\vspace{0.8em}\n"
+        )
         safe_company = _escape_latex(company_name)
 
         return rf"""\documentclass[11pt,a4paper]{{article}}

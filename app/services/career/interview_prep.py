@@ -1,5 +1,7 @@
 import json
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
+from app.services.career.interview_questions import get_family
 from app.services.llm.provider import LLMService
 
 
@@ -10,22 +12,48 @@ class InterviewPrepService:
         resume_text: str,
         job_description: str,
         missing_skills: List[str],
+        family: str = "technical",
         provider: str = "gemini",
     ) -> Dict[str, Any]:
         """
-        Generates role-specific technical/behavioral interview questions and missing-skill gap defense strategies.
+        Generates role-specific interview questions and gap defenses.
+
+        The `family` parameter selects the focus of the generated questions:
+          - technical       — system design, coding, debugging, tooling
+          - behavioral      — STAR-format conflict, ownership, failure
+          - product         — product thinking, prioritization, user sense
+          - leadership      — team growth, direction, hiring, incidents
+          - mlops_devops    — CI/CD, observability, on-call, ML lifecycle
         """
+        family_def = get_family(family)
+        family_snippet = family_def["snippet"].strip()
+
         prompt = f"""
-You are a senior technical interviewer. Analyze the candidate's resume, the target job description, and the identified missing skills.
+You are a senior technical interviewer. Analyze the candidate's resume, the
+target job description, and the identified missing skills.
 
 Missing Skills Identified: {', '.join(missing_skills) if missing_skills else 'None'}
 
-Generate a structured interview preparation guide in valid JSON format with keys:
-1. "technical_questions": List of 5 technical questions tailored to the job requirements.
-2. "behavioral_questions": List of 3 behavioral STAR-method questions focusing on problem-solving and collaboration.
-3. "gap_defenses": List of objects with "missing_skill", "strategic_answer", and "transferable_angle" explaining how the candidate can pivot when asked about skills they lack.
+QUESTION FAMILY: {family_def['label']}
+{family_def['description']}
 
-Return ONLY raw JSON.
+QUESTION FAMILY INSTRUCTIONS
+---------------------------
+{family_snippet}
+
+OUTPUT FORMAT
+-------------
+Return a single JSON object with exactly these keys:
+
+1. "technical_questions"   — array of 5 strings tailored to the job requirements
+                             and consistent with the question family above.
+2. "behavioral_questions"  — array of 3 strings using the STAR method.
+3. "gap_defenses"          — array of objects, each with:
+                             - "missing_skill"     : the skill from Missing Skills
+                             - "strategic_answer"  : how to pivot when asked about it
+                             - "transferable_angle": the related expertise to lead with
+
+Return ONLY the raw JSON object. No prose, no code fences, no explanation.
 
 RESUME:
 {resume_text}
@@ -47,6 +75,12 @@ JOB DESCRIPTION:
                 cleaned_json = cleaned_json[3:-3].strip()
 
             data = json.loads(cleaned_json)
+            # Annotate the response with the family that was used, so the UI
+            # can display which prompt the user selected.
+            if isinstance(data, dict):
+                data.setdefault("_meta", {})
+                data["_meta"]["family"] = family
+                data["_meta"]["family_label"] = family_def["label"]
             return data
         except Exception as exc:
             return {
@@ -59,10 +93,20 @@ JOB DESCRIPTION:
                 "gap_defenses": [
                     {
                         "missing_skill": skill,
-                        "strategic_answer": f"Highlight foundational knowledge in related technologies and fast learning speed for {skill}.",
-                        "transferable_angle": "Emphasize architectural concepts over specific tool syntax.",
+                        "strategic_answer": (
+                            f"Highlight foundational knowledge in related "
+                            f"technologies and fast learning speed for {skill}."
+                        ),
+                        "transferable_angle": (
+                            "Emphasize architectural concepts over specific "
+                            "tool syntax."
+                        ),
                     }
                     for skill in missing_skills[:3]
                 ],
-                "error": f"JSON parsing fallback applied: {exc}",
+                "_meta": {
+                    "family": family,
+                    "family_label": family_def["label"],
+                    "error": f"JSON parsing fallback applied: {exc}",
+                },
             }

@@ -102,6 +102,8 @@ def direct_model_options(provider: str) -> list[str]:
 TEMPLATE_LABELS = {
     "auto": "🎯 Auto-detect (match JD language)",
     "international_ats": "International English ATS (Single-Page)",
+    "academic": "Academic / Research (Serif, Education-first)",
+    "technical_lead": "Technical Lead (Open Source + Speaking)",
     "hr_executive_gold": "HR Gold Standard (Executive)",
     "german_corporate": "Corporate Slate Navy",
     "german_minimal_ats": "German Minimal ATS (Single-Column)",
@@ -365,6 +367,19 @@ def fetch_model_catalog(api_base: str, provider: str = "experiential") -> list[d
         except Exception:
             pass
     return []
+
+
+@st.cache_data(ttl=300)
+def fetch_career_options(api_base: str) -> dict:
+    """Static catalog of cover-letter templates and interview families."""
+    try:
+        url = f"{api_base.rstrip('/')}/api/v1/resume/career-options"
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return {"cover_letter_templates": [], "interview_families": []}
 
 
 @st.cache_data(ttl=15)
@@ -1540,3 +1555,184 @@ def _render_career_suite():
 
 
 _render_career_suite()
+
+
+# ==============================================================================
+# ANALYTICS (fragment)
+# ==============================================================================
+
+
+@st.fragment
+def _render_analytics():
+    st.divider()
+    st.header("Analytics")
+
+    @st.cache_data(ttl=30)
+    def _fetch_analytics(api_base: str, period: str) -> dict | None:
+        try:
+            url = f"{api_base.rstrip('/')}/api/v1/resume/analytics/summary"
+            r = requests.get(url, params={"period": period}, timeout=15)
+            if r.status_code == 200:
+                return r.json().get("data") or {}
+        except Exception:
+            return None
+        return None
+
+    period_labels = {
+        "today": "Today",
+        "7d": "Last 7 days",
+        "30d": "Last 30 days",
+        "90d": "Last 90 days",
+        "all": "All time",
+    }
+    period_choice = st.selectbox(
+        "Time window",
+        list(period_labels.keys()),
+        index=2,
+        format_func=lambda x: period_labels[x],
+        key="analytics_period",
+    )
+
+    data = _fetch_analytics(
+        st.session_state.get("api_base", DEFAULT_API_BASE),
+        period_choice,
+    )
+
+    if not data:
+        st.info("No analytics available for this window.")
+        if st.button("Refresh", key="analytics_refresh_empty"):
+            st.cache_data.clear()
+            st.rerun()
+        return
+
+    meta = data.get("meta") or {}
+    llm = data.get("llm") or {}
+    apps = data.get("applications") or {}
+    pipeline = data.get("pipeline") or {}
+    skills = data.get("skills") or {}
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("LLM calls", llm.get("total_calls", 0))
+    m2.metric("Tokens", fmt_tokens(llm.get("total_tokens", 0)))
+    m3.metric("Est. cost", f"${llm.get('total_cost_usd', 0.0):.4f}")
+    m4.metric("Failure rate", f"{llm.get('failure_rate', 0.0) * 100:.1f}%")
+
+    st.divider()
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("**Token usage over time**")
+        series = llm.get("tokens_by_day") or []
+        if series:
+            df = pd.DataFrame(series).set_index("date")
+            st.bar_chart(df, height=220, color="#2563eb")
+        else:
+            st.caption("No token activity in this window.")
+
+    with right:
+        st.markdown("**Cost over time**")
+        series = llm.get("cost_by_day") or []
+        if series:
+            df = pd.DataFrame(series).set_index("date")
+            st.line_chart(df, height=220, color="#16a34a")
+        else:
+            st.caption("No cost data in this window.")
+
+    st.divider()
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("**Applications by status**")
+        status_counts = apps.get("by_status") or {}
+        if status_counts and any(status_counts.values()):
+            df = pd.DataFrame(
+                [{"status": k, "count": v} for k, v in status_counts.items()]
+            ).set_index("status")
+            st.bar_chart(df, height=220, color="#6366f1")
+        else:
+            st.caption("No applications recorded yet.")
+
+    with right:
+        st.markdown("**ATS score distribution**")
+        buckets = apps.get("by_score_bucket") or {}
+        if buckets and any(buckets.values()):
+            df = pd.DataFrame(
+                [{"score range": k, "count": v} for k, v in buckets.items()]
+            ).set_index("score range")
+            st.bar_chart(df, height=220, color="#f59e0b")
+        else:
+            st.caption("No ATS scores recorded yet.")
+
+    st.divider()
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("**Top missing skills**")
+        top_missing = skills.get("top_missing") or []
+        if top_missing:
+            df = pd.DataFrame(
+                [{"skill": k, "count": v} for k, v in top_missing]
+            ).set_index("skill")
+            st.bar_chart(df, height=280, color="#dc2626")
+        else:
+            st.caption("No missing-skill data yet.")
+
+    with right:
+        st.markdown("**LLM calls by provider**")
+        providers = llm.get("calls_by_provider") or {}
+        if providers:
+            df = pd.DataFrame(
+                [{"provider": k, "calls": v} for k, v in providers.items()]
+            ).set_index("provider")
+            st.bar_chart(df, height=280, color="#0891b2")
+        else:
+            st.caption("No provider data yet.")
+
+    st.divider()
+
+    left, right = st.columns([1, 1.4])
+    with left:
+        st.markdown("**Avg operation duration (ms)**")
+        durations = pipeline.get("avg_duration_ms_by_op") or {}
+        if durations:
+            rows = [
+                {"operation": op, "avg_ms": v}
+                for op, v in sorted(durations.items(), key=lambda kv: -kv[1])
+            ]
+            st.dataframe(rows, width="stretch", hide_index=True)
+        else:
+            st.caption("No pipeline duration data yet.")
+
+    with right:
+        st.markdown("**Recent errors**")
+        errors = data.get("recent_errors") or []
+        if errors:
+            rows = [
+                {
+                    "Time": e.get("timestamp", "")[:19].replace("T", " "),
+                    "Kind": e.get("kind", ""),
+                    "Provider": e.get("provider", ""),
+                    "Error": (e.get("error") or "")[:120],
+                }
+                for e in errors
+            ]
+            st.dataframe(
+                pd.DataFrame(rows, dtype=str),
+                width="stretch",
+                hide_index=True,
+            )
+        else:
+            st.caption("No errors in this window.")
+
+    st.caption(
+        f"Window: {period_labels[period_choice]} · "
+        f"{meta.get('events_count', 0)} events · "
+        f"{meta.get('applications_count', 0)} applications"
+    )
+
+    if st.button("Refresh analytics", key="analytics_refresh"):
+        st.cache_data.clear()
+        st.rerun()
+
+
+_render_analytics()

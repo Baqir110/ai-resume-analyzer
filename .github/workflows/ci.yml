@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+jobs:
+  test:
+    name: Test on Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            texlive-latex-base \
+            texlive-latex-extra \
+            texlive-fonts-recommended
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Create stub .env for tests
+        run: |
+          cat > .env <<'EOF'
+          OPENAI_BASE_URL=https://api.experientiallabs.ai/v1
+          EXPERIENTIAL_ORG_KEY=test_key_ci
+          DEFAULT_API_BASE=http://localhost:8000
+          LLM_PROCESSING_LOG=data/llm_processing.jsonl
+          GEMINI_MODEL=gemini-2.5-flash
+          GROQ_MODEL=llama-3.3-70b-versatile
+          OPENAI_MODEL=gpt-4o-mini
+          CLAUDE_MODEL=claude-3-5-haiku-20241022
+          OLLAMA_MODEL=llama3.2
+          OLLAMA_BASE_URL=http://localhost:11434/api/generate
+          EOF
+
+      - name: Lint with compileall
+        run: python -m compileall -q app
+
+      - name: Run pytest
+        run: python -m pytest -v --maxfail=5
+        continue-on-error: false
+
+      - name: Smoke-test FastAPI import
+        run: |
+          python -c "from app.main import app; print('FastAPI app imports OK')"
+
+      - name: Smoke-test dashboard import
+        run: |
+          python -c "import ast; ast.parse(open('app/dashboard.py', encoding='utf-8').read()); print('dashboard.py parses OK')"

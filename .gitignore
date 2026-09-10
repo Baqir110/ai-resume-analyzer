@@ -1,5 +1,5 @@
 # ==============================================================================
-# Python
+# Python Build & Bytecode
 # ==============================================================================
 __pycache__/
 *.py[cod]
@@ -25,7 +25,7 @@ share/python-wheels/
 MANIFEST
 
 # ==============================================================================
-# Virtual environments
+# Virtual Environments
 # ==============================================================================
 .venv/
 venv/
@@ -36,7 +36,7 @@ venv.bak/
 .python-version
 
 # ==============================================================================
-# Testing & coverage
+# Testing & Coverage
 # ==============================================================================
 .pytest_cache/
 .cache/
@@ -49,7 +49,7 @@ htmlcov/
 *.cover
 
 # ==============================================================================
-# Linters & type checkers
+# Linters & Type Checkers
 # ==============================================================================
 .mypy_cache/
 .dmypy.json
@@ -58,7 +58,7 @@ dmypy.json
 .pyre/
 
 # ==============================================================================
-# IDE / editor
+# IDEs & System Files
 # ==============================================================================
 .vscode/
 .idea/
@@ -70,25 +70,25 @@ Thumbs.db
 desktop.ini
 
 # ==============================================================================
-# Environment & secrets
+# Environment Variables & Secrets
 # ==============================================================================
 .env
 .env.*
 !.env.example
 
 # ==============================================================================
-# Data & runtime artifacts
+# Data & Runtime Artifacts
 # ==============================================================================
-# Processing log grows on every call — do not commit
+# Processing log (grows on every run)
 data/llm_processing.jsonl
 
-# SQLite application database
+# Databases
 data/applications.db
 data/*.db
 data/*.db-journal
 data/*.sqlite
 
-# Generated CVs, exports, uploads
+# Generated Files & Outputs
 data/*.pdf
 data/*.docx
 data/*.tex
@@ -99,39 +99,44 @@ uploads/
 *.tmp
 
 # ==============================================================================
-# Backup / patch artifacts
+# Backups & Patch Scripts
 # ==============================================================================
-# Full directory backups created by restructure_project.py
 app_backup_*/
 app_backup_*
-
-# In-place file backups created by every patch_*.py / fix_*.py script
+cleanup_backup_*/
 *.bak_*
 *.bak
 *_backup.py
 *.orig
-
-# Auto-fix scripts left in the working tree (optional — comment out if you
-# want them tracked)
 auto_fixing_dashboard.py
 patch_*.py
 fix_*.py
+restructur*_project.py
 
 # ==============================================================================
-# OS / misc
+# AI Assistants & Tool Workspaces
+# ==============================================================================
+.agents/
+.claude/
+.agent/
+.ai/
+
+# ==============================================================================
+# Logs & LaTeX Artifacts
 # ==============================================================================
 *.log
-!data/llm_processing.jsonl   # keep the folder pattern, only gitignore that file
-
-# ==============================================================================
-# LaTeX build artifacts (if pdflatex runs in-repo)
-# ==============================================================================
 *.aux
 *.fdb_latexmk
 *.fls
-*.log
 *.out
 *.synctex.gz
 *.toc
-*.agents/
-*.claude/
+
+# Shell redirection mistakes
+/dict
+/int
+/str
+/Path
+/list[dict]
+/Optional[datetime]
+/python3

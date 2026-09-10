@@ -2,8 +2,7 @@
 Analytics aggregator.
 
 Reads the pipeline event log (JSONL) and the tracker SQLite DB, and returns
-a structured payload for the analytics dashboard. Pure read-only — no side
-effects on either data source.
+a structured payload for the analytics dashboard. Pure read-only.
 """
 
 from __future__ import annotations
@@ -15,8 +14,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-# Canonical status values used by the tracker. Kept here so the analytics
-# layer doesn't need to import the tracker service (avoids coupling).
 _KNOWN_STATUSES = ("Saved", "Applied", "Interview", "Offer", "Rejected", "Withdrawn")
 
 
@@ -83,23 +80,9 @@ def compute_analytics(
     db_path: Path,
     since_hours: Optional[int] = 24 * 30,
 ) -> dict[str, Any]:
-    """
-    Aggregate stats from the pipeline log and the tracker DB.
-
-    Returns a dict with:
-        applications: status breakdown, per-day trend, ATS-score distribution
-        llm: token usage over time, provider mix, failure rate, avg duration
-        skills: top missing skills across all analyses
-        pipeline: operation mix, avg duration per operation
-        recent_errors: last N failed events
-        meta: time window, event counts
-    """
     events = _load_events(log_path, since_hours)
     applications = _load_applications(db_path)
 
-    # -------------------------------------------------------------------
-    # Applications
-    # -------------------------------------------------------------------
     status_counter: Counter[str] = Counter()
     score_buckets = {"0-40": 0, "40-60": 0, "60-75": 0, "75-90": 0, "90-100": 0}
     apps_by_day: dict[str, int] = defaultdict(int)
@@ -107,7 +90,6 @@ def compute_analytics(
     for app in applications:
         st = app.get("status") or "Unknown"
         status_counter[st] += 1
-
         score = app.get("ats_score") or 0
         if score < 40:
             score_buckets["0-40"] += 1
@@ -119,48 +101,32 @@ def compute_analytics(
             score_buckets["75-90"] += 1
         else:
             score_buckets["90-100"] += 1
-
         created = (app.get("created_at") or "")[:10]
         if created:
             apps_by_day[created] += 1
 
-    # Fill missing statuses with 0 for consistent chart shape
     for s in _KNOWN_STATUSES:
         status_counter.setdefault(s, 0)
 
-    # -------------------------------------------------------------------
-    # LLM usage over time + provider mix + failure rate
-    # -------------------------------------------------------------------
     tokens_by_day: dict[str, int] = defaultdict(int)
     cost_by_day: dict[str, float] = defaultdict(float)
     calls_by_provider: Counter[str] = Counter()
     calls_by_model: Counter[str] = Counter()
 
-    total_calls = 0
-    completed_calls = 0
-    failed_calls = 0
+    total_calls = completed_calls = failed_calls = 0
     total_tokens = 0
     total_cost = 0.0
     duration_sum = 0.0
     duration_count = 0
 
-    # -------------------------------------------------------------------
-    # Pipeline operations + durations
-    # -------------------------------------------------------------------
     ops_started: Counter[str] = Counter()
     ops_completed: Counter[str] = Counter()
     ops_failed: Counter[str] = Counter()
     op_durations: dict[str, list[float]] = defaultdict(list)
 
-    # -------------------------------------------------------------------
-    # Skills extracted from analysis_completed events
-    # -------------------------------------------------------------------
     missing_skills_counter: Counter[str] = Counter()
     matched_skills_counter: Counter[str] = Counter()
 
-    # -------------------------------------------------------------------
-    # Recent errors
-    # -------------------------------------------------------------------
     recent_errors: list[dict[str, Any]] = []
 
     for ev in events:
@@ -173,26 +139,21 @@ def compute_analytics(
                 total_calls += 1
             elif event == "request_completed":
                 completed_calls += 1
-
                 tokens = int(ev.get("total_tokens", 0) or 0)
                 cost = float(ev.get("estimated_cost_usd", 0.0) or 0.0)
                 duration = float(ev.get("duration_ms", 0.0) or 0.0)
-
                 total_tokens += tokens
                 total_cost += cost
                 if duration:
                     duration_sum += duration
                     duration_count += 1
-
                 provider = str(ev.get("provider", "unknown"))
                 model = str(ev.get("model", "unknown"))
                 calls_by_provider[provider] += 1
                 calls_by_model[model] += 1
-
                 day = ts[:10] if ts else "unknown"
                 tokens_by_day[day] += tokens
                 cost_by_day[day] += cost
-
             elif event == "provider_failed":
                 failed_calls += 1
                 if len(recent_errors) < 25:
@@ -229,18 +190,13 @@ def compute_analytics(
                     )
 
         elif kind == "analysis" and event == "analysis_completed":
-            missing = ev.get("missing_skills") or []
-            matched = ev.get("matching_skills") or []
-            for s in missing:
+            for s in ev.get("missing_skills") or []:
                 if s:
                     missing_skills_counter[str(s)] += 1
-            for s in matched:
+            for s in ev.get("matching_skills") or []:
                 if s:
                     matched_skills_counter[str(s)] += 1
 
-    # -------------------------------------------------------------------
-    # Compose
-    # -------------------------------------------------------------------
     op_avg_durations = {
         op: round(sum(durs) / len(durs), 1) for op, durs in op_durations.items() if durs
     }

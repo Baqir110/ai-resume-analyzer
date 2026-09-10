@@ -34,6 +34,8 @@ _GERMAN_LAYOUTS = {
 }
 _ENGLISH_LAYOUTS = {
     "international_ats",
+    "academic",
+    "technical_lead",
     "standard",
     "hr_executive_gold",
 }
@@ -1608,6 +1610,7 @@ GERMAN_MINIMAL_ATS_LATEX_TEMPLATE = r"""
 \definecolor{primary}{HTML}{0F172A}
 \definecolor{subgray}{HTML}{475569}
 \hypersetup{colorlinks=true,urlcolor=primary,pdfborder={0 0 0}}
+\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{#2}}
 \titleformat{\section}{\large\bfseries\color{primary}}{}{0em}{}[\vspace{-3pt}\color{subgray}\rule{\textwidth}{0.5pt}]
 \titlespacing{\section}{0pt}{8pt}{3pt}
 \setlist[itemize]{leftmargin=1.2em,itemsep=1pt,topsep=1pt,parsep=0pt}
@@ -1628,6 +1631,129 @@ RESUME_BODY_PLACEHOLDER
 \end{document}
 """
 
+
+ACADEMIC_LATEX_TEMPLATE = r"""
+\documentclass[10pt,a4paper]{article}
+\usepackage[top=1.0cm, bottom=1.0cm, left=1.4cm, right=1.4cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{mathptmx}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\sloppy
+\setlength{\emergencystretch}{3em}
+\tolerance=2000
+\hbadness=10000
+
+\definecolor{primary}{HTML}{111827}
+\definecolor{linkcolor}{HTML}{1F4E79}
+\definecolor{subgray}{HTML}{4B5563}
+
+\hypersetup{
+    colorlinks=true,
+    urlcolor=linkcolor,
+    linkcolor=linkcolor,
+    pdfborder={0 0 0}
+}
+
+\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{#2}}
+
+\titleformat{\section}
+    {\large\scshape\bfseries\color{primary}}
+    {}{0em}{}
+    [\vspace{-2pt}\rule{\textwidth}{0.4pt}]
+\titlespacing{\section}{0pt}{7pt}{3pt}
+
+\setlist[itemize]{leftmargin=1.2em, itemsep=1pt, topsep=1pt, parsep=0pt}
+
+\newcommand{\jobheader}[3]{%
+    \noindent\textbf{#1}, \textit{#2} \hfill #3\par\vspace{1pt}
+}
+\newcommand{\projheader}[3]{%
+    \noindent\textbf{#1} \textit{(#2)} \hfill \hrlink{#3}{GitHub}\par\vspace{1pt}
+}
+\newcommand{\degreeheader}[3]{\jobheader{#1}{#2}{#3}}
+
+\pagestyle{empty}
+
+\begin{document}
+
+\begin{center}
+  {\LARGE \scshape \bfseries CANDIDATE_NAME_PLACEHOLDER}\\[3pt]
+  {\small \color{subgray} CANDIDATE_CONTACT_PLACEHOLDER}
+\end{center}
+
+RESUME_BODY_PLACEHOLDER
+
+\end{document}
+"""
+
+
+TECHNICAL_LEAD_LATEX_TEMPLATE = r"""
+\documentclass[10pt,a4paper]{article}
+\usepackage[top=0.85cm, bottom=0.85cm, left=1.2cm, right=1.2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage[normalem]{ulem}
+\usepackage{hyperref}
+\sloppy
+\setlength{\emergencystretch}{3em}
+\tolerance=2000
+\hbadness=10000
+
+\definecolor{primary}{HTML}{0F172A}
+\definecolor{accent}{HTML}{7C3AED}
+\definecolor{linkcolor}{HTML}{6D28D9}
+\definecolor{subgray}{HTML}{475569}
+
+\hypersetup{
+    colorlinks=true,
+    urlcolor=linkcolor,
+    linkcolor=linkcolor,
+    pdfborder={0 0 0}
+}
+
+\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{\uline{#2}}}
+
+\titleformat{\section}
+    {\large\bfseries\color{primary}}
+    {}{0em}{}
+    [\vspace{-3pt}\color{accent}\rule{\textwidth}{0.8pt}]
+\titlespacing{\section}{0pt}{5pt}{3pt}
+
+\setlist[itemize]{leftmargin=1.15em, itemsep=0.8pt, topsep=0.8pt, parsep=0pt}
+
+\newcommand{\jobheader}[3]{%
+    \noindent\textbf{\color{primary}#1} \textbar\ \textcolor{subgray}{#2} \hfill \textbf{\color{accent}#3}\par\vspace{1pt}
+}
+\newcommand{\projheader}[3]{%
+    \noindent\textbf{\color{primary}#1} \textit{\color{subgray}(#2)} \hfill \hrlink{#3}{GitHub}\par\vspace{1pt}
+}
+\newcommand{\degreeheader}[3]{\jobheader{#1}{#2}{#3}}
+
+\pagestyle{empty}
+
+\begin{document}
+
+\begin{center}
+  {\Huge \bfseries \color{primary} CANDIDATE_NAME_PLACEHOLDER}\\[3pt]
+  {\large \bfseries \color{accent} CANDIDATE_TITLE_PLACEHOLDER}\\[4pt]
+  {\small \color{subgray} CANDIDATE_CONTACT_PLACEHOLDER}
+\end{center}
+
+RESUME_BODY_PLACEHOLDER
+
+\end{document}
+"""
+
+
 CV_TEMPLATES = {
     "german_corporate": GERMAN_CORPORATE_LATEX_TEMPLATE,
     "german_ats": GERMAN_ATS_LATEX_TEMPLATE,
@@ -1635,6 +1761,8 @@ CV_TEMPLATES = {
     "german_modern": GERMAN_MODERN_LATEX_TEMPLATE,
     GERMAN_MINIMAL_ATS: GERMAN_MINIMAL_ATS_LATEX_TEMPLATE,
     "international_ats": INTERNATIONAL_ATS_LATEX_TEMPLATE,
+    "academic": ACADEMIC_LATEX_TEMPLATE,
+    "technical_lead": TECHNICAL_LEAD_LATEX_TEMPLATE,
     "standard": STANDARD_LATEX_TEMPLATE,
     "hr_executive_gold": HR_EXECUTIVE_GOLD_LATEX_TEMPLATE,
 }
@@ -1770,6 +1898,19 @@ def generate_german_latex_content(
     is_german_minimal_ats = layout_style == GERMAN_MINIMAL_ATS
     invariants = extract_resume_invariants(resume_text) if is_german_minimal_ats else []
 
+    # Extract the header from the ORIGINAL resume (before translation) so
+    # name and contact details survive pre-flight language normalization.
+    try:
+        candidate_header = extract_candidate_header(resume_text)
+    except FactualValidationError:
+        candidate_header = {
+            "name": "Candidate",
+            "email": "",
+            "phone": "",
+            "linkedin": "",
+            "github": "",
+        }
+
     target_lang = required_language_for_layout(layout_style)
     resume_text = normalize_resume_language(
         resume_text,
@@ -1785,7 +1926,25 @@ def generate_german_latex_content(
     language_rule = _language_rule(layout_style)
     suggestions_text = _format_actionable_suggestions(improvement_suggestions)
 
-    if layout_style in ("international_ats", "standard", "hr_executive_gold"):
+    if layout_style == "academic":
+        section_names = (
+            "\\section*{Education}\n\n"
+            "\\section*{Research Experience}\n\n"
+            "\\section*{Publications}\n\n"
+            "\\section*{Teaching Experience}\n\n"
+            "\\section*{Skills \\& Languages}\n\n"
+            "\\section*{Awards \\& Grants}"
+        )
+    elif layout_style == "technical_lead":
+        section_names = (
+            "\\section*{Technical Summary}\n\n"
+            "\\section*{Professional Experience}\n\n"
+            "\\section*{Open Source \\& Projects}\n\n"
+            "\\section*{Speaking \\& Community}\n\n"
+            "\\section*{Education}\n\n"
+            "\\section*{Skills}"
+        )
+    elif layout_style in ("international_ats", "standard", "hr_executive_gold"):
         section_names = (
             "\\section*{Profile}\n\n"
             "\\section*{Work Experience}\n\n"
@@ -1939,16 +2098,8 @@ ABSOLUTE PROHIBITIONS — VIOLATION WILL BE REJECTED:
         or "CANDIDATE_CONTACT_PLACEHOLDER" in template
         or "CANDIDATE_TITLE_PLACEHOLDER" in template
     ):
-        try:
-            _hdr = extract_candidate_header(resume_text)
-        except FactualValidationError:
-            _hdr = {
-                "name": "Candidate",
-                "email": "",
-                "phone": "",
-                "linkedin": "",
-                "github": "",
-            }
+        # Reuse the header extracted before pre-flight translation.
+        _hdr = candidate_header
 
         template = template.replace(
             "CANDIDATE_NAME_PLACEHOLDER",

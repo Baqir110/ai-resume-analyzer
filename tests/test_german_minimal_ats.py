@@ -59,7 +59,7 @@ M.Sc. Computer Science | Technical University | 2018 - 2020
 
 def test_german_minimal_ats_uses_candidate_header_and_validates_facts(monkeypatch):
     monkeypatch.setattr(
-        "app.services.latex_generator.LLMService.generate", _generate_body
+        "app.services.cv.latex_generator.LLMService.generate", _generate_body
     )
 
     latex = generate_german_latex_content(
@@ -77,7 +77,7 @@ def test_german_minimal_ats_uses_candidate_header_and_validates_facts(monkeypatc
 
 def test_german_minimal_ats_rejects_altered_facts(monkeypatch):
     monkeypatch.setattr(
-        "app.services.latex_generator.LLMService.generate",
+        "app.services.cv.latex_generator.LLMService.generate",
         lambda *_args, **_kwargs: VALID_BODY.replace("Example GmbH", "Different GmbH"),
     )
 
@@ -94,7 +94,7 @@ def test_german_minimal_ats_does_not_fallback_after_llm_failure(monkeypatch):
     def fail(*_args, **_kwargs):
         raise RuntimeError("provider unavailable")
 
-    monkeypatch.setattr("app.services.latex_generator.LLMService.generate", fail)
+    monkeypatch.setattr("app.services.cv.latex_generator.LLMService.generate", fail)
 
     with pytest.raises(FactualValidationError, match="no CV was produced"):
         generate_german_latex_content(
@@ -140,7 +140,7 @@ def test_generation_endpoints_return_422_for_factual_validation_failure(
 )
 def test_german_minimal_ats_compiles_with_local_pdflatex(monkeypatch):
     monkeypatch.setattr(
-        "app.services.latex_generator.LLMService.generate", _generate_body
+        "app.services.cv.latex_generator.LLMService.generate", _generate_body
     )
     latex = generate_german_latex_content(
         resume_text=RESUME,

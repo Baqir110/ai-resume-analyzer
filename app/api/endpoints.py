@@ -1,14 +1,14 @@
+import functools
 import io
 import json
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import List, Optional
-from pydantic import BaseModel
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt
-
 from fastapi import (
     APIRouter,
     File,
@@ -17,24 +17,21 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
+from app.core.event_log import log_event, new_request_id, set_request_id
 from app.models.schemas import AnalysisResponse
-from app.services.llm import quota_tracker
 from app.services.analysis.ats_analyzer import analyze_resume_content
-from app.services.career.audit_matrix import AuditMatrixService
 from app.services.bulk.bulk_analyzer import BulkAnalyzerService
+from app.services.career.audit_matrix import AuditMatrixService
 from app.services.career.cover_letter import CoverLetterService
-from app.services.cv.diff_preview import DiffPreviewService
 from app.services.career.interview_prep import InterviewPrepService
+from app.services.career.linkedin_optimizer import LinkedInOptimizerService
+from app.services.cv.diff_preview import DiffPreviewService
 from app.services.cv.latex_generator import (
     FactualValidationError,
     compile_latex_to_pdf,
     generate_german_latex_content,
-)
-from app.services.career.linkedin_optimizer import LinkedInOptimizerService
-from app.services.llm.provider import (
-    LOG_PATH,
-    LLMService,
 )
 from app.services.cv.optimizer import (
     auto_select_layout,
@@ -42,8 +39,13 @@ from app.services.cv.optimizer import (
     optimize_resume_bullets,
     suggest_best_cv_format,
 )
+from app.services.llm import quota_tracker
+from app.services.llm.provider import LOG_PATH, LLMService
 from app.services.parsing.resume_parser import extract_text_from_file
-from app.services.tracking.tracker import ApplicationTrackerService
+from app.services.tracking.tracker import (
+    ApplicationTrackerService,
+    DB_PATH as TRACKER_DB_PATH,
+)
 
 router = APIRouter()
 
@@ -55,17 +57,10 @@ router = APIRouter()
 
 def _log_pipeline(operation: str):
     """Wrap an endpoint with pipeline_started / pipeline_completed events."""
-    import functools
 
     def decorator(fn):
         @functools.wraps(fn)
         async def wrapper(*args, **kwargs):
-            from app.core.event_log import (
-                log_event,
-                new_request_id,
-                set_request_id,
-            )
-
             rid = new_request_id()
             set_request_id(rid)
             started = time.perf_counter()
@@ -148,7 +143,7 @@ def _decode_suggestions(raw: Optional[str]) -> List[str]:
 
 
 # ============================================================
-# PUSHED FLAGSHIP SCHEMAS & MODELS
+# REQUEST SCHEMAS
 # ============================================================
 
 
@@ -247,6 +242,7 @@ async def generate_cover_letter_endpoint(
     resume_file: UploadFile = File(...),
     company_name: Optional[str] = Form("Target Company"),
     tone: Optional[str] = Form("formal"),
+    template: Optional[str] = Form("classic_professional"),
     provider: Optional[str] = Form("experiential"),
 ):
     resume_text = await extract_text_from_file(resume_file)
@@ -258,6 +254,7 @@ async def generate_cover_letter_endpoint(
         job_description=job_description,
         company_name=company_name or "Target Company",
         tone=tone or "formal",
+        template=template or "classic_professional",
         provider=provider or "experiential",
     )
     return {"status": "success", "data": result}
@@ -272,6 +269,7 @@ async def generate_cover_letter_endpoint(
 async def interview_prep_endpoint(
     job_description: str = Form(...),
     resume_file: UploadFile = File(...),
+    family: Optional[str] = Form("technical"),
     provider: Optional[str] = Form("experiential"),
 ):
     resume_text = await extract_text_from_file(resume_file)
@@ -285,6 +283,7 @@ async def interview_prep_endpoint(
         resume_text=resume_text,
         job_description=job_description,
         missing_skills=missing_skills,
+        family=family or "technical",
         provider=provider or "experiential",
     )
     return {"status": "success", "data": prep_data}
@@ -497,6 +496,51 @@ async def quota_events(provider: Optional[str] = None, limit: int = 50):
 
 
 # ============================================================
+# ANALYTICS
+# ============================================================
+
+
+@router.get("/analytics/summary")
+async def analytics_summary(period: str = "30d"):
+    """Aggregated analytics over the pipeline log and the tracker DB."""
+    period_map = {
+        "today": 24,
+        "24h": 24,
+        "7d": 24 * 7,
+        "30d": 24 * 30,
+        "90d": 24 * 90,
+        "all": None,
+    }
+    hours = period_map.get((period or "30d").lower(), 24 * 30)
+
+    from app.services.analytics.dashboard_aggregator import compute_analytics
+
+    data = compute_analytics(
+        log_path=LOG_PATH,
+        db_path=TRACKER_DB_PATH,
+        since_hours=hours,
+    )
+    return {
+        "status": "success",
+        "period": period,
+        "data": data,
+    }
+
+
+@router.get("/career-options")
+async def career_options():
+    """Catalog of cover-letter templates and interview families."""
+    from app.services.career.cover_letter_templates import list_templates
+    from app.services.career.interview_questions import list_families
+
+    return {
+        "status": "success",
+        "cover_letter_templates": list_templates(),
+        "interview_families": list_families(),
+    }
+
+
+# ============================================================
 # ANALYZE RESUME
 # ============================================================
 
@@ -531,9 +575,8 @@ async def analyze_resume(
         resume_text=resume_text,
         job_description=job_description,
     )
-    from app.core.event_log import log_event as _le
 
-    _le(
+    log_event(
         "analysis",
         "analysis_completed",
         ats_score=results.get("ats_match_score"),
@@ -726,7 +769,9 @@ async def generate_german_cv_endpoint(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={
-            "Content-Disposition": ("attachment; " f"filename=CV_{selected_style}.pdf")
+            "Content-Disposition": (
+                "attachment; " f"filename=CV_{selected_style}.pdf"
+            )
         },
     )
 
@@ -791,7 +836,9 @@ async def generate_tex_cv_endpoint(
         io.BytesIO(latex_code.encode("utf-8")),
         media_type="text/plain",
         headers={
-            "Content-Disposition": ("attachment; " f"filename=CV_{selected_style}.tex")
+            "Content-Disposition": (
+                "attachment; " f"filename=CV_{selected_style}.tex"
+            )
         },
     )
 
