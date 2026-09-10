@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
-from app.services.llm_provider import LLMService
-from app.services.llm_provider import LLMService
+from app.services.llm.provider import LLMService
+from app.services.llm.provider import LLMService
 
 
 def test_gateway_connection():

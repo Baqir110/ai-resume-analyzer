@@ -4,13 +4,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.latex_generator import (
+from app.services.cv.latex_generator import (
     FactualValidationError,
     compile_latex_to_pdf,
     extract_resume_invariants,
     generate_german_latex_content,
 )
-
 
 RESUME = """Jane Doe
 jane@example.com | +49 123 456789
@@ -122,7 +121,10 @@ def test_generation_endpoints_return_422_for_factual_validation_failure(
 
     response = TestClient(app).post(
         endpoint,
-        data={"job_description": "Platform engineering role", "layout_style": "german_minimal_ats"},
+        data={
+            "job_description": "Platform engineering role",
+            "layout_style": "german_minimal_ats",
+        },
         files={"resume_file": ("resume.txt", RESUME.encode(), "text/plain")},
     )
 
@@ -133,7 +135,9 @@ def test_generation_endpoints_return_422_for_factual_validation_failure(
     }
 
 
-@pytest.mark.skipif(shutil.which("pdflatex") is None, reason="pdflatex is not installed")
+@pytest.mark.skipif(
+    shutil.which("pdflatex") is None, reason="pdflatex is not installed"
+)
 def test_german_minimal_ats_compiles_with_local_pdflatex(monkeypatch):
     monkeypatch.setattr(
         "app.services.latex_generator.LLMService.generate", _generate_body

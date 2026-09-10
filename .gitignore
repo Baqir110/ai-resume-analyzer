@@ -1,11 +1,135 @@
-__pycache__/ 
-*.pyc 
-.env 
+# ==============================================================================
+# Python
+# ==============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ==============================================================================
+# Virtual environments
+# ==============================================================================
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# ==============================================================================
+# Testing & coverage
+# ==============================================================================
+.pytest_cache/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+*.cover
+
+# ==============================================================================
+# Linters & type checkers
+# ==============================================================================
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pyre/
+
+# ==============================================================================
+# IDE / editor
+# ==============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==============================================================================
+# Environment & secrets
+# ==============================================================================
+.env
 .env.*
 !.env.example
 
+# ==============================================================================
+# Data & runtime artifacts
+# ==============================================================================
+# Processing log grows on every call — do not commit
 data/llm_processing.jsonl
 
-__pycache__/
-*.py[cod]
-.venv/
+# SQLite application database
+data/applications.db
+data/*.db
+data/*.db-journal
+data/*.sqlite
+
+# Generated CVs, exports, uploads
+data/*.pdf
+data/*.docx
+data/*.tex
+data/*.txt
+outputs/
+exports/
+uploads/
+*.tmp
+
+# ==============================================================================
+# Backup / patch artifacts
+# ==============================================================================
+# Full directory backups created by restructure_project.py
+app_backup_*/
+app_backup_*
+
+# In-place file backups created by every patch_*.py / fix_*.py script
+*.bak_*
+*.bak
+*_backup.py
+*.orig
+
+# Auto-fix scripts left in the working tree (optional — comment out if you
+# want them tracked)
+auto_fixing_dashboard.py
+patch_*.py
+fix_*.py
+
+# ==============================================================================
+# OS / misc
+# ==============================================================================
+*.log
+!data/llm_processing.jsonl   # keep the folder pattern, only gitignore that file
+
+# ==============================================================================
+# LaTeX build artifacts (if pdflatex runs in-repo)
+# ==============================================================================
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc

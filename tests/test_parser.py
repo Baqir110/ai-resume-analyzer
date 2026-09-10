@@ -4,7 +4,7 @@ from docx import Document
 from fastapi import HTTPException, UploadFile
 from pypdf import PdfWriter
 
-from app.services.parser import extract_text_from_file
+from app.services.parsing.resume_parser import extract_text_from_file
 
 
 @pytest.mark.asyncio

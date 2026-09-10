@@ -1,4 +1,7 @@
 import io
+import json
+import time
+from datetime import datetime, timezone
 from typing import List, Optional
 from pydantic import BaseModel
 
@@ -16,31 +19,132 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 
 from app.models.schemas import AnalysisResponse
-from app.services.analyzer import analyze_resume_content
-from app.services.audit_matrix import AuditMatrixService
-from app.services.bulk_analyzer import BulkAnalyzerService
-from app.services.cover_letter import CoverLetterService
-from app.services.diff_preview import DiffPreviewService
-from app.services.interview_prep import InterviewPrepService
-from app.services.latex_generator import (
+from app.services.llm import quota_tracker
+from app.services.analysis.ats_analyzer import analyze_resume_content
+from app.services.career.audit_matrix import AuditMatrixService
+from app.services.bulk.bulk_analyzer import BulkAnalyzerService
+from app.services.career.cover_letter import CoverLetterService
+from app.services.cv.diff_preview import DiffPreviewService
+from app.services.career.interview_prep import InterviewPrepService
+from app.services.cv.latex_generator import (
     FactualValidationError,
     compile_latex_to_pdf,
     generate_german_latex_content,
 )
-from app.services.linkedin_optimizer import LinkedInOptimizerService
-from app.services.llm_provider import (
+from app.services.career.linkedin_optimizer import LinkedInOptimizerService
+from app.services.llm.provider import (
     LOG_PATH,
     LLMService,
 )
-from app.services.optimizer import (
+from app.services.cv.optimizer import (
+    auto_select_layout,
     generate_full_tailored_cv,
     optimize_resume_bullets,
     suggest_best_cv_format,
 )
-from app.services.parser import extract_text_from_file
-from app.services.tracker import ApplicationTrackerService
+from app.services.parsing.resume_parser import extract_text_from_file
+from app.services.tracking.tracker import ApplicationTrackerService
 
 router = APIRouter()
+
+
+# ============================================================
+# PIPELINE LOGGING DECORATOR
+# ============================================================
+
+
+def _log_pipeline(operation: str):
+    """Wrap an endpoint with pipeline_started / pipeline_completed events."""
+    import functools
+
+    def decorator(fn):
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            from app.core.event_log import (
+                log_event,
+                new_request_id,
+                set_request_id,
+            )
+
+            rid = new_request_id()
+            set_request_id(rid)
+            started = time.perf_counter()
+
+            _jd = kwargs.get("job_description") or ""
+            _uf = kwargs.get("resume_file")
+            _ext = ""
+            if _uf is not None and getattr(_uf, "filename", None):
+                _ext = _uf.filename.rsplit(".", 1)[-1].lower()
+
+            log_event(
+                "pipeline",
+                "pipeline_started",
+                rid,
+                operation=operation,
+                jd_chars=len(_jd),
+                file_type=_ext,
+            )
+
+            try:
+                result = await fn(*args, **kwargs)
+                log_event(
+                    "pipeline",
+                    "pipeline_completed",
+                    rid,
+                    operation=operation,
+                    status="success",
+                    duration_ms=round((time.perf_counter() - started) * 1000, 1),
+                )
+                return result
+            except HTTPException as exc:
+                log_event(
+                    "pipeline",
+                    "pipeline_failed",
+                    rid,
+                    operation=operation,
+                    status="http_error",
+                    status_code=exc.status_code,
+                    duration_ms=round((time.perf_counter() - started) * 1000, 1),
+                    error=str(exc.detail)[:300],
+                )
+                raise
+            except Exception as exc:
+                log_event(
+                    "pipeline",
+                    "pipeline_failed",
+                    rid,
+                    operation=operation,
+                    status="error",
+                    duration_ms=round((time.perf_counter() - started) * 1000, 1),
+                    error=str(exc)[:300],
+                )
+                raise
+
+        return wrapper
+
+    return decorator
+
+
+# ============================================================
+# SHARED HELPERS
+# ============================================================
+
+
+def _decode_suggestions(raw: Optional[str]) -> List[str]:
+    if not raw:
+        return []
+    raw = raw.strip()
+    if not raw:
+        return []
+
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+    except json.JSONDecodeError:
+        pass
+
+    return [line.strip() for line in raw.splitlines() if line.strip()]
 
 
 # ============================================================
@@ -143,7 +247,7 @@ async def generate_cover_letter_endpoint(
     resume_file: UploadFile = File(...),
     company_name: Optional[str] = Form("Target Company"),
     tone: Optional[str] = Form("formal"),
-    provider: Optional[str] = Form("gemini"),
+    provider: Optional[str] = Form("experiential"),
 ):
     resume_text = await extract_text_from_file(resume_file)
     if not resume_text:
@@ -154,7 +258,7 @@ async def generate_cover_letter_endpoint(
         job_description=job_description,
         company_name=company_name or "Target Company",
         tone=tone or "formal",
-        provider=provider or "gemini",
+        provider=provider or "experiential",
     )
     return {"status": "success", "data": result}
 
@@ -168,7 +272,7 @@ async def generate_cover_letter_endpoint(
 async def interview_prep_endpoint(
     job_description: str = Form(...),
     resume_file: UploadFile = File(...),
-    provider: Optional[str] = Form("gemini"),
+    provider: Optional[str] = Form("experiential"),
 ):
     resume_text = await extract_text_from_file(resume_file)
     if not resume_text:
@@ -181,7 +285,7 @@ async def interview_prep_endpoint(
         resume_text=resume_text,
         job_description=job_description,
         missing_skills=missing_skills,
-        provider=provider or "gemini",
+        provider=provider or "experiential",
     )
     return {"status": "success", "data": prep_data}
 
@@ -195,7 +299,7 @@ async def interview_prep_endpoint(
 async def linkedin_optimize_endpoint(
     resume_file: UploadFile = File(...),
     target_role: Optional[str] = Form("Software Engineer"),
-    provider: Optional[str] = Form("gemini"),
+    provider: Optional[str] = Form("experiential"),
 ):
     resume_text = await extract_text_from_file(resume_file)
     if not resume_text:
@@ -204,7 +308,7 @@ async def linkedin_optimize_endpoint(
     optimized = LinkedInOptimizerService.optimize_profile(
         resume_text=resume_text,
         target_role=target_role or "Software Engineer",
-        provider=provider or "gemini",
+        provider=provider or "experiential",
     )
     return {"status": "success", "data": optimized}
 
@@ -303,14 +407,93 @@ def build_ats_docx_resume(markdown_resume: str) -> bytes:
 
 
 # ============================================================
-# LIGHTWEIGHT KEEP-ALIVE HEALTH ENDPOINT
+# HEALTH
 # ============================================================
 
 
 @router.get("/health")
 async def health_check():
-    """Lightweight endpoint for keep-alive pings."""
     return {"status": "ok"}
+
+
+# ============================================================
+# USAGE & MODEL CATALOG
+# ============================================================
+
+
+@router.get("/usage-summary")
+async def usage_summary(period: str = "all"):
+    period_map = {
+        "today": 24,
+        "24h": 24,
+        "7d": 24 * 7,
+        "30d": 24 * 30,
+        "all": None,
+    }
+    hours = period_map.get((period or "all").lower(), None)
+
+    summary = LLMService.get_usage_summary(since_hours=hours)
+
+    return {
+        "status": "success",
+        "period": period,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "summary": summary,
+    }
+
+
+@router.get("/model-catalog")
+async def model_catalog(provider: str = "experiential"):
+    try:
+        rows = LLMService.get_model_catalog(provider)
+        return {
+            "status": "success",
+            "provider": provider,
+            "count": len(rows),
+            "models": rows,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ============================================================
+# QUOTA / USAGE LIMITS
+# ============================================================
+
+
+@router.get("/quota-status")
+async def quota_status(provider: Optional[str] = None):
+    try:
+        if provider:
+            data = quota_tracker.build_quota_status(
+                provider=provider,
+                log_path=LOG_PATH,
+            )
+            return {
+                "status": "success",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "providers": {provider.lower(): data},
+            }
+
+        data = quota_tracker.build_all_provider_quota_status(log_path=LOG_PATH)
+        return {
+            "status": "success",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "providers": data,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/quota-events")
+async def quota_events(provider: Optional[str] = None, limit: int = 50):
+    limit = max(1, min(limit, 200))
+    events = quota_tracker.recent_rate_limit_events(provider=provider, limit=limit)
+    return {
+        "status": "success",
+        "count": len(events),
+        "events": events,
+    }
 
 
 # ============================================================
@@ -322,11 +505,13 @@ async def health_check():
     "/analyze",
     response_model=AnalysisResponse,
 )
+@_log_pipeline("analyze")
 async def analyze_resume(
     job_description: str = Form(...),
     resume_file: UploadFile = File(...),
-    provider: Optional[str] = Form("gemini"),
+    provider: Optional[str] = Form("experiential"),
     model_name: Optional[str] = Form(None),
+    route_mode: Optional[str] = Form("experiential"),
 ):
     if not job_description.strip():
         raise HTTPException(
@@ -346,6 +531,15 @@ async def analyze_resume(
         resume_text=resume_text,
         job_description=job_description,
     )
+    from app.core.event_log import log_event as _le
+
+    _le(
+        "analysis",
+        "analysis_completed",
+        ats_score=results.get("ats_match_score"),
+        missing_count=len(results.get("missing_skills") or []),
+        matched_count=len(results.get("matching_skills") or []),
+    )
 
     results["recommendation"] = suggest_best_cv_format(
         job_description=job_description,
@@ -354,10 +548,15 @@ async def analyze_resume(
 
     if results.get("missing_skills"):
         try:
+            # Auto layout detection based on JD language
+            _layout = auto_select_layout(job_description, resume_text)
+
             print(
                 f"[AI DEBUG] /analyze "
                 f"provider={provider!r} "
                 f"model_name={model_name!r} "
+                f"route_mode={route_mode!r} "
+                f"layout={_layout!r} "
                 f"missing_skills={results.get('missing_skills')!r}"
             )
 
@@ -365,25 +564,24 @@ async def analyze_resume(
                 resume_text=resume_text,
                 job_description=job_description,
                 missing_skills=results["missing_skills"],
-                provider=provider or "gemini",
+                provider=provider or "experiential",
+                model_name=model_name,
+                route_mode=route_mode or "experiential",
+                layout_style=_layout,
             )
 
-            results.setdefault(
-                "improvement_suggestions",
-                [],
-            ).append(
+            results.setdefault("improvement_suggestions", []).append(
                 f"AI Bullet Point Rewrite "
-                f"({(provider or 'gemini').upper()}):\n\n"
+                f"({(provider or 'experiential').upper()}):\n\n"
                 f"{rewrite}"
             )
 
         except Exception as exc:
             print(f"[AI DEBUG] /analyze bullet rewrite failed: {exc}")
 
-            results.setdefault(
-                "improvement_suggestions",
-                [],
-            ).append(f"AI bullet rewrite unavailable: {exc}")
+            results.setdefault("improvement_suggestions", []).append(
+                f"AI bullet rewrite unavailable: {exc}"
+            )
 
     return AnalysisResponse(
         status="success",
@@ -402,11 +600,15 @@ async def analyze_resume(
 
 
 @router.post("/generate-full")
+@_log_pipeline("generate-full")
 async def generate_full_cv_endpoint(
     job_description: str = Form(...),
     resume_file: UploadFile = File(...),
-    provider: Optional[str] = Form("gemini"),
+    provider: Optional[str] = Form("experiential"),
     model_name: Optional[str] = Form(None),
+    route_mode: Optional[str] = Form("experiential"),
+    layout_style: Optional[str] = Form("auto"),
+    improvement_suggestions: Optional[str] = Form(None),
 ):
     resume_text = await extract_text_from_file(resume_file)
 
@@ -416,6 +618,8 @@ async def generate_full_cv_endpoint(
             detail="Could not extract readable text from resume.",
         )
 
+    suggestions = _decode_suggestions(improvement_suggestions)
+
     analysis = analyze_resume_content(
         resume_text=resume_text,
         job_description=job_description,
@@ -423,11 +627,20 @@ async def generate_full_cv_endpoint(
 
     missing_skills = analysis.get("missing_skills") or []
 
+    # Auto-select layout from JD language (or use explicit override)
+    _layout = layout_style or "auto"
+    if _layout.strip().lower() in ("auto", "auto_detect", ""):
+        _layout = auto_select_layout(job_description, resume_text)
+
     tailored = generate_full_tailored_cv(
         resume_text=resume_text,
         job_description=job_description,
         missing_skills=missing_skills,
-        provider=provider or "gemini",
+        provider=provider or "experiential",
+        model_name=model_name,
+        route_mode=route_mode or "experiential",
+        improvement_suggestions=suggestions,
+        layout_style=_layout,
     )
 
     docx_bytes = build_ats_docx_resume(tailored)
@@ -451,15 +664,18 @@ async def generate_full_cv_endpoint(
 
 
 @router.post("/generate-german-cv")
+@_log_pipeline("generate-german-cv")
 async def generate_german_cv_endpoint(
     job_description: str = Form(...),
     resume_file: UploadFile = File(...),
-    layout_style: Optional[str] = Form("german_corporate"),
+    layout_style: Optional[str] = Form("auto"),
     template_style: Optional[str] = Form(None),
-    provider: Optional[str] = Form("gemini"),
+    provider: Optional[str] = Form("experiential"),
     model_name: Optional[str] = Form(None),
+    route_mode: Optional[str] = Form("experiential"),
+    improvement_suggestions: Optional[str] = Form(None),
 ):
-    selected_style = template_style or layout_style or "german_corporate"
+    selected_style = template_style or layout_style or "auto"
 
     resume_text = await extract_text_from_file(resume_file)
 
@@ -468,6 +684,8 @@ async def generate_german_cv_endpoint(
             status_code=400,
             detail="Could not extract readable text from resume.",
         )
+
+    suggestions = _decode_suggestions(improvement_suggestions)
 
     analysis = analyze_resume_content(
         resume_text=resume_text,
@@ -481,9 +699,11 @@ async def generate_german_cv_endpoint(
             resume_text=resume_text,
             job_description=job_description,
             missing_skills=missing_skills,
-            provider=provider or "gemini",
+            provider=provider or "experiential",
             model_name=model_name,
+            route_mode=route_mode or "experiential",
             layout_style=selected_style,
+            improvement_suggestions=suggestions,
         )
     except FactualValidationError as exc:
         raise HTTPException(
@@ -506,10 +726,7 @@ async def generate_german_cv_endpoint(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={
-            "Content-Disposition": (
-                "attachment; "
-                f"filename=Lebenslauf_Muhammad_Baqir_{selected_style}.pdf"
-            )
+            "Content-Disposition": ("attachment; " f"filename=CV_{selected_style}.pdf")
         },
     )
 
@@ -520,15 +737,18 @@ async def generate_german_cv_endpoint(
 
 
 @router.post("/generate-tex-cv")
+@_log_pipeline("generate-tex-cv")
 async def generate_tex_cv_endpoint(
     job_description: str = Form(...),
     resume_file: UploadFile = File(...),
-    layout_style: Optional[str] = Form("german_corporate"),
+    layout_style: Optional[str] = Form("auto"),
     template_style: Optional[str] = Form(None),
-    provider: Optional[str] = Form("gemini"),
+    provider: Optional[str] = Form("experiential"),
     model_name: Optional[str] = Form(None),
+    route_mode: Optional[str] = Form("experiential"),
+    improvement_suggestions: Optional[str] = Form(None),
 ):
-    selected_style = template_style or layout_style or "german_corporate"
+    selected_style = template_style or layout_style or "auto"
 
     resume_text = await extract_text_from_file(resume_file)
 
@@ -537,6 +757,8 @@ async def generate_tex_cv_endpoint(
             status_code=400,
             detail="Could not extract readable text from resume.",
         )
+
+    suggestions = _decode_suggestions(improvement_suggestions)
 
     analysis = analyze_resume_content(
         resume_text=resume_text,
@@ -550,9 +772,11 @@ async def generate_tex_cv_endpoint(
             resume_text=resume_text,
             job_description=job_description,
             missing_skills=missing_skills,
-            provider=provider or "gemini",
+            provider=provider or "experiential",
             model_name=model_name,
+            route_mode=route_mode or "experiential",
             layout_style=selected_style,
+            improvement_suggestions=suggestions,
         )
     except FactualValidationError as exc:
         raise HTTPException(
@@ -567,10 +791,7 @@ async def generate_tex_cv_endpoint(
         io.BytesIO(latex_code.encode("utf-8")),
         media_type="text/plain",
         headers={
-            "Content-Disposition": (
-                "attachment; "
-                f"filename=Lebenslauf_Muhammad_Baqir_{selected_style}.tex"
-            )
+            "Content-Disposition": ("attachment; " f"filename=CV_{selected_style}.tex")
         },
     )
 

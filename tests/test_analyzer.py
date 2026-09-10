@@ -1,5 +1,5 @@
 import pytest
-from app.services.analyzer import analyze_resume_content, load_skills_taxonomy
+from app.services.analysis.ats_analyzer import analyze_resume_content, load_skills_taxonomy
 
 
 def test_load_skills_taxonomy():
