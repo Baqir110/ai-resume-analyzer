@@ -133,3 +133,5 @@ fix_*.py
 *.out
 *.synctex.gz
 *.toc
+*.agents/
+*.claude/
