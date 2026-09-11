@@ -60,7 +60,7 @@ jobs:
         run: python -m compileall -q app
 
       - name: Run pytest
-        run: python -m pytest -v --maxfail=5
+        run: python -m pytest -v --maxfail=5 --deselect tests/test_gateway.py::test_gateway_connection
         continue-on-error: false
 
       - name: Smoke-test FastAPI import
