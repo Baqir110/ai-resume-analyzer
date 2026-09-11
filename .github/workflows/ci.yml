@@ -33,7 +33,9 @@ jobs:
             build-essential \
             texlive-latex-base \
             texlive-latex-extra \
-            texlive-fonts-recommended
+            texlive-fonts-recommended \
+            lmodern
+
 
       - name: Install Python dependencies
         run: |
