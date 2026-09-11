@@ -7,8 +7,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](https://opensource.org/licenses/MIT)
 
 AI Resume analysis, optimisation and career application based on FastAPI, Streamlit and various LLM providers.
-
 The platform also uses AI to compare resumes with job descriptions, flags missing skills and keywords, creates job-specific CVs (DOCX, LaTeX/PDF), allows for bulk CV analysis, tracks the usage of LLMs and provider quotas, and offers further career workflow features like cover letters, interview preparation, LinkedIn optimization, application tracking, and resume audit analysis.
+
 ---
 
 ## Table of Contents
