@@ -1,6 +1,5 @@
 """Smoke test — hits every endpoint and reports pass/fail."""
 
-import io
 from pathlib import Path
 
 import requests
