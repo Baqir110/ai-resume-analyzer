@@ -10,8 +10,8 @@
 | Metric | Value |
 |--------|-------|
 | API endpoints | 0 |
-| Python files | 57 |
-| Lines of code | 16,625 |
+| Python files | 56 |
+| Lines of code | 14,301 |
 | Tests | 12 |
 
 <!-- END:AUTO:STATS -->
@@ -287,7 +287,6 @@ ai-resume-analyzer/
 │   │   ├── helpers.py
 │   │   └── main.py
 │   ├── data/
-│   │   ├── llm_processing.jsonl
 │   │   ├── resume_feedback.db
 │   │   ├── resume_versions.db
 │   │   └── skill_progression.db
@@ -323,7 +322,6 @@ ai-resume-analyzer/
 │   │   │   ├── __init__.py
 │   │   │   ├── diff_preview.py
 │   │   │   ├── latex_generator.py
-│   │   │   ├── latex_generator_backup.py
 │   │   │   └── optimizer.py
 │   │   ├── llm/
 │   │   │   ├── __init__.py
@@ -642,7 +640,7 @@ Retained as-is. Each generates structured content for its domain.
 
 <!-- BEGIN:AUTO:TESTS -->
 
-**Total tests: 12** across 5 files.
+**Total tests: 12** across 6 files.
 
 | Test file | Count |
 |-----------|-------|
