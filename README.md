@@ -289,7 +289,6 @@ ai-resume-analyzer/
 │   │   ├── helpers.py
 │   │   └── main.py
 │   ├── data/
-│   │   ├── llm_processing.jsonl
 │   │   ├── resume_feedback.db
 │   │   ├── resume_versions.db
 │   │   └── skill_progression.db
