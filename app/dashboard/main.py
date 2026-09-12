@@ -1,15 +1,12 @@
 """Main Streamlit dashboard entry point with modular page routing."""
 
+import os
 import sys
 from pathlib import Path
 
-# Ensure the project root is on sys.path so `app.*` imports resolve when
-# launched via `streamlit run app/dashboard/main.py`
 _project_root = Path(__file__).resolve().parents[2]
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
-
-import os
 
 import streamlit as st
 
@@ -39,30 +36,37 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ============================================================
 # Header
+# ============================================================
+
 st.title("🎯 AI Resume & CV Matcher")
 st.caption(
-    "One workspace for ATS analysis, targeted CV generation, interview preparation, and application tracking."
+    "One workspace for ATS analysis, targeted CV generation, "
+    "interview preparation, and application tracking."
 )
 
-# Sidebar navigation
+# ============================================================
+# Sidebar — navigation and config
+# IMPORTANT: This block is NOT a fragment. Navigation must rerun the
+# whole script so the routed page changes.
+# ============================================================
+
 with st.sidebar:
     st.markdown("## Navigation")
 
     pages = {
-        "analyzer": ("📊 Analyze Resume", "Analyzer"),
-        "cv_generator": ("📄 Generate CV", "CVGenerator"),
-        "advanced_tools": ("🔧 Advanced Tools", "AdvancedTools"),
-        "career_suite": ("💼 Career Suite", "CareerSuite"),
-        "analytics": ("📈 Analytics", "Analytics"),
+        "analyzer": "📊 Analyze Resume",
+        "cv_generator": "📄 Generate CV",
+        "advanced_tools": "🔧 Advanced Tools",
+        "career_suite": "💼 Career Suite",
+        "analytics": "📈 Analytics",
     }
 
-    # Streamlit owns the widget state via key="current_page".
-    # Do NOT pass index= here — it would override the user's choice on rerun.
-    selected_page = st.selectbox(
+    st.selectbox(
         "Choose a tool",
         list(pages.keys()),
-        format_func=lambda x: pages[x][0],
+        format_func=lambda x: pages[x],
         label_visibility="collapsed",
         key="current_page",
     )
@@ -70,12 +74,12 @@ with st.sidebar:
     st.divider()
 
     with st.expander("⚙️ Backend Configuration", expanded=False):
-        api_base = st.text_input(
+        api_base_input = st.text_input(
             "FastAPI Backend URL",
             value=st.session_state.get("api_base", "http://localhost:8000"),
         )
-        if api_base.strip():
-            st.session_state["api_base"] = api_base.strip().rstrip("/")
+        if api_base_input.strip():
+            st.session_state["api_base"] = api_base_input.strip().rstrip("/")
         st.caption("API keys are configured in the backend environment.")
 
     st.divider()
@@ -87,7 +91,28 @@ with st.sidebar:
             st.session_state["job_desc"] = ""
             st.rerun()
 
+# ============================================================
+# Sidebar — usage + quota panel
+# This one IS a fragment so it doesn't refetch on every interaction.
+# ============================================================
+
+
+@st.fragment
+def _sidebar_usage_fragment() -> None:
+    from app.dashboard.components import render_usage_and_quota_panel
+
+    with st.sidebar:
+        render_usage_and_quota_panel(st.session_state.get("api_base", "http://localhost:8000"))
+
+
+_sidebar_usage_fragment()
+
+# ============================================================
 # Route to selected page
+# ============================================================
+
+selected_page = st.session_state.get("current_page", "analyzer")
+
 if selected_page == "analyzer":
     from app.dashboard.views.analyzer import render_analyzer_page
 
@@ -108,3 +133,19 @@ elif selected_page == "analytics":
     from app.dashboard.views.analytics import render_analytics_page
 
     render_analytics_page()
+
+# ============================================================
+# Bottom — backend log panel
+# This one IS a fragment too.
+# ============================================================
+
+
+@st.fragment
+def _bottom_log_fragment() -> None:
+    from app.dashboard.components import render_backend_log_panel
+
+    st.divider()
+    render_backend_log_panel(st.session_state.get("api_base", "http://localhost:8000"))
+
+
+_bottom_log_fragment()

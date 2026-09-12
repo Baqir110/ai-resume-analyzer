@@ -1,3 +1,5 @@
+"""Launch the backend + dashboard for local development."""
+
 import os
 import subprocess
 import sys
@@ -6,19 +8,16 @@ from pathlib import Path
 
 
 def main():
-    # Determine the project root (where this run.py lives)
     project_root = Path(__file__).resolve().parent
-
-    # Build an environment with PYTHONPATH pointing to the project root
-    # so that `app.*` imports resolve in both the backend and dashboard.
     env = os.environ.copy()
     env["PYTHONPATH"] = str(project_root) + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONUNBUFFERED"] = "1"
 
-    # Start the FastAPI backend via uvicorn as a subprocess
     print("🚀 Starting FastAPI backend on port 8000...")
     backend_process = subprocess.Popen(
         [
             sys.executable,
+            "-u",
             "-m",
             "uvicorn",
             "app.main:app",
@@ -26,15 +25,15 @@ def main():
             "127.0.0.1",
             "--port",
             "8000",
+            "--log-level",
+            "info",
         ],
         env=env,
         cwd=project_root,
     )
 
-    # Give the backend a brief moment to spin up
     time.sleep(2)
 
-    # Start the Streamlit dashboard (new modular entry point)
     print("🎯 Starting Streamlit dashboard...")
     streamlit_process = subprocess.Popen(
         ["streamlit", "run", "app/dashboard/main.py"],
@@ -43,7 +42,6 @@ def main():
     )
 
     try:
-        # Keep the script running while both processes are active
         backend_process.wait()
         streamlit_process.wait()
     except KeyboardInterrupt:

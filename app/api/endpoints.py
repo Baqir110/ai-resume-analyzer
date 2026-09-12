@@ -1,5 +1,6 @@
 import functools
 import io
+import re
 import time
 from datetime import datetime, timezone
 
@@ -46,7 +47,10 @@ router = APIRouter()
 
 
 def _log_pipeline(operation: str):
-    """Wrap an endpoint with pipeline_started / pipeline_completed events."""
+    """Wrap an endpoint with pipeline_started / pipeline_completed events.
+
+    Also prints to stdout so uvicorn shows activity in the terminal.
+    """
 
     def decorator(fn):
         @functools.wraps(fn)
@@ -57,9 +61,17 @@ def _log_pipeline(operation: str):
 
             _jd = kwargs.get("job_description") or ""
             _uf = kwargs.get("resume_file")
+            _fn = ""
             _ext = ""
-            if _uf is not None and getattr(_uf, "filename", None):
-                _ext = _uf.filename.rsplit(".", 1)[-1].lower()
+            if _uf is not None:
+                _fn = getattr(_uf, "filename", "") or ""
+                if _fn:
+                    _ext = _fn.rsplit(".", 1)[-1].lower()
+
+            print(f"\n{'─' * 70}")
+            print(f"▶  [{operation}] START  req={rid}")
+            print(f"   jd={len(_jd)} chars  file={_fn or '(none)'} ({_ext or '?'})")
+            print(f"{'─' * 70}", flush=True)
 
             log_event(
                 "pipeline",
@@ -72,16 +84,24 @@ def _log_pipeline(operation: str):
 
             try:
                 result = await fn(*args, **kwargs)
+                ms = round((time.perf_counter() - started) * 1000, 1)
+                print(f"✅ [{operation}] OK  req={rid}  ({ms}ms)\n", flush=True)
                 log_event(
                     "pipeline",
                     "pipeline_completed",
                     rid,
                     operation=operation,
                     status="success",
-                    duration_ms=round((time.perf_counter() - started) * 1000, 1),
+                    duration_ms=ms,
                 )
                 return result
             except HTTPException as exc:
+                ms = round((time.perf_counter() - started) * 1000, 1)
+                print(
+                    f"❌ [{operation}] HTTP {exc.status_code}  req={rid}  "
+                    f"({ms}ms)  {str(exc.detail)[:200]}\n",
+                    flush=True,
+                )
                 log_event(
                     "pipeline",
                     "pipeline_failed",
@@ -89,18 +109,24 @@ def _log_pipeline(operation: str):
                     operation=operation,
                     status="http_error",
                     status_code=exc.status_code,
-                    duration_ms=round((time.perf_counter() - started) * 1000, 1),
+                    duration_ms=ms,
                     error=str(exc.detail)[:300],
                 )
                 raise
             except Exception as exc:
+                ms = round((time.perf_counter() - started) * 1000, 1)
+                print(
+                    f"❌ [{operation}] ERROR  req={rid}  ({ms}ms)  "
+                    f"{type(exc).__name__}: {str(exc)[:200]}\n",
+                    flush=True,
+                )
                 log_event(
                     "pipeline",
                     "pipeline_failed",
                     rid,
                     operation=operation,
                     status="error",
-                    duration_ms=round((time.perf_counter() - started) * 1000, 1),
+                    duration_ms=ms,
                     error=str(exc)[:300],
                 )
                 raise
@@ -224,6 +250,77 @@ async def generate_cover_letter_endpoint(
         provider=provider or "experiential",
     )
     return {"status": "success", "data": result}
+
+
+@router.post("/generate-cover-letter-pdf")
+@_log_pipeline("generate-cover-letter-pdf")
+async def generate_cover_letter_pdf_endpoint(
+    job_description: str = Form(...),
+    resume_file: UploadFile = File(...),
+    company_name: str | None = Form("Target Company"),
+    tone: str | None = Form("formal"),
+    template: str | None = Form("classic_professional"),
+    provider: str | None = Form("experiential"),
+    model_name: str | None = Form(None),
+    route_mode: str | None = Form("experiential"),
+    language: str | None = Form("auto"),
+):
+    """Generate a professional cover letter as a PDF.
+
+    Uses an HR-grade business-letter layout compiled via LaTeX.
+    `language` values: "auto" (detect from JD), "en", "de".
+    """
+    from app.services.career.cover_letter_pdf import (
+        compile_cover_letter_pdf,
+        generate_cover_letter_latex,
+    )
+
+    resume_text = await extract_text_from_file(resume_file)
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="Could not extract resume text.")
+
+    try:
+        latex_code, lang_used = generate_cover_letter_latex(
+            resume_text=resume_text,
+            job_description=job_description,
+            company_name=company_name or "Target Company",
+            template_style=template or "classic_professional",
+            provider=provider or "experiential",
+            model_name=model_name,
+            route_mode=route_mode or "experiential",
+            language=language or "auto",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Cover letter generation failed: {exc}",
+        ) from exc
+
+    try:
+        print("\n===== COVER LETTER LATEX DEBUG =====")
+        print("Contains parskip package:", r"\usepackage{parskip}" in latex_code)
+        print("Contains lmodern:", r"\usepackage{lmodern}" in latex_code)
+        print("Preamble:")
+        print(latex_code[:1000])
+        print("====================================\n")
+        pdf_bytes = compile_cover_letter_pdf(latex_code)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Cover letter PDF compilation failed.\n\n{exc}",
+        ) from exc
+
+    safe_company = re.sub(r"[^A-Za-z0-9_-]+", "_", company_name or "company")
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=Cover_Letter_{lang_used}_{safe_company}.pdf"
+            )
+        },
+    )
 
 
 # ============================================================
@@ -354,15 +451,14 @@ def build_ats_docx_resume(markdown_resume: str) -> bytes:
             run.font.size = Pt(12)
 
         elif stripped.startswith(("* ", "- ")):
-            paragraph = doc.add_paragraph(
-                stripped[2:].strip(),
-                style="List Bullet",
-            )
-            paragraph.style.font.size = Pt(10)
+            paragraph = doc.add_paragraph(style="List Bullet")
+            run = paragraph.add_run(stripped[2:].strip())
+            run.font.size = Pt(10)
 
         else:
-            paragraph = doc.add_paragraph(stripped)
-            paragraph.style.font.size = Pt(10)
+            paragraph = doc.add_paragraph()
+            run = paragraph.add_run(stripped)
+            run.font.size = Pt(10)
 
     buffer = io.BytesIO()
     doc.save(buffer)
