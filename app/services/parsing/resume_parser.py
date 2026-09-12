@@ -1,11 +1,13 @@
 import io
-from pypdf import PdfReader
+
 from docx import Document
-from fastapi import UploadFile, HTTPException
+from fastapi import HTTPException, UploadFile
+from pypdf import PdfReader
 
 
 async def extract_text_from_file(file: UploadFile) -> str:
     import time as _time
+
     from app.core.event_log import log_event
 
     _started = _time.perf_counter()
@@ -54,9 +56,7 @@ async def _extract_text_impl(file: UploadFile) -> str:
         # Reset file pointer so other downstream functions can re-read if needed
         await file.seek(0)
     except Exception as e:
-        raise HTTPException(
-            status_code=400, detail=f"Failed to read upload stream: {str(e)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Failed to read upload stream: {e!s}")
 
     filename = (file.filename or "").lower()
 
@@ -71,9 +71,7 @@ async def _extract_text_impl(file: UploadFile) -> str:
                     pages_text.append(extracted.strip())
             return "\n\n".join(pages_text).strip()
         except Exception as e:
-            raise HTTPException(
-                status_code=400, detail=f"Failed to parse PDF file: {str(e)}"
-            )
+            raise HTTPException(status_code=400, detail=f"Failed to parse PDF file: {e!s}")
 
     # 2. DOCX Files (Paragraphs + Tables)
     elif filename.endswith(".docx"):
@@ -97,18 +95,14 @@ async def _extract_text_impl(file: UploadFile) -> str:
 
             return "\n\n".join(extracted_blocks).strip()
         except Exception as e:
-            raise HTTPException(
-                status_code=400, detail=f"Failed to parse DOCX file: {str(e)}"
-            )
+            raise HTTPException(status_code=400, detail=f"Failed to parse DOCX file: {e!s}")
 
     # 3. Plain Text Files
     elif filename.endswith(".txt"):
         try:
             return content.decode("utf-8", errors="ignore").strip()
         except Exception as e:
-            raise HTTPException(
-                status_code=400, detail=f"Failed to parse TXT file: {str(e)}"
-            )
+            raise HTTPException(status_code=400, detail=f"Failed to parse TXT file: {e!s}")
 
     # 4. Fallback for Unsupported Types
     else:

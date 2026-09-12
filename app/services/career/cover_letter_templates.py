@@ -10,8 +10,6 @@ Adding a template = adding an entry here. No other file needs to change.
 
 from __future__ import annotations
 
-from typing import Optional
-
 TEMPLATES: dict[str, dict[str, str]] = {
     "classic_professional": {
         "label": "Classic Professional",
@@ -115,7 +113,7 @@ RULES: No "I am writing to apply". No "as you can see from my resume".
 }
 
 
-def get_template(template_id: Optional[str]) -> dict[str, str]:
+def get_template(template_id: str | None) -> dict[str, str]:
     if not template_id:
         return TEMPLATES["classic_professional"]
     return TEMPLATES.get(template_id, TEMPLATES["classic_professional"])
@@ -132,4 +130,4 @@ def default_template_id() -> str:
     return "classic_professional"
 
 
-__all__ = ["TEMPLATES", "get_template", "list_templates", "default_template_id"]
+__all__ = ["TEMPLATES", "default_template_id", "get_template", "list_templates"]

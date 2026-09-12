@@ -1,8 +1,4 @@
-import pytest
-from app.services.analysis.ats_analyzer import (
-    analyze_resume_content,
-    load_skills_taxonomy,
-)
+from app.services.analysis.ats_analyzer import analyze_resume_content, load_skills_taxonomy
 
 
 def test_load_skills_taxonomy():
@@ -13,7 +9,9 @@ def test_load_skills_taxonomy():
 
 
 def test_analyze_resume_content_matching():
-    job_desc = "Looking for a Python software engineer with FastAPI, Docker, and PostgreSQL experience."
+    job_desc = (
+        "Looking for a Python software engineer with FastAPI, Docker, and PostgreSQL experience."
+    )
     resume = "I am a Python engineer who works with FastAPI and Docker daily."
 
     results = analyze_resume_content(resume, job_desc)

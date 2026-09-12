@@ -4,7 +4,6 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-green.svg)](https://fastapi.tiangolo.com/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.37+-red.svg)](https://streamlit.io/)
 [![Docker](https://img.shields.io/badge/Docker-compose-blue.svg)](https://docs.docker.com/compose/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](https://opensource.org/licenses/MIT)
 
 AI Resume analysis, optimisation and career application based on FastAPI, Streamlit and various LLM providers.
 The platform also uses AI to compare resumes with job descriptions, flags missing skills and keywords, creates job-specific CVs (DOCX, LaTeX/PDF), allows for bulk CV analysis, tracks the usage of LLMs and provider quotas, and offers further career workflow features like cover letters, interview preparation, LinkedIn optimization, application tracking, and resume audit analysis.
@@ -158,6 +157,12 @@ Seven charts: tokens/day, cost/day, applications by status, ATS score distributi
 ---
 
 ## System Architecture
+The system follows a modular architecture consisting of a frontend dashboard, FastAPI backend, AI/LLM provider layer, resume processing and analysis services, and usage/quota tracking components.
+
+The architecture separates the presentation, API, business logic, AI provider integration, and persistence layers, making the application easier to maintain, extend, and deploy.
+
+![System Architecture](images/arch.png)
+
 
 ```
                     ┌─────────────────────────┐

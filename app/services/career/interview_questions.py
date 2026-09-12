@@ -10,8 +10,6 @@ Adding a family = adding an entry here.
 
 from __future__ import annotations
 
-from typing import Optional
-
 FAMILIES: dict[str, dict] = {
     "technical": {
         "label": "Technical Deep-Dive",
@@ -109,7 +107,7 @@ For each question:
 }
 
 
-def get_family(family_id: Optional[str]) -> dict:
+def get_family(family_id: str | None) -> dict:
     if not family_id:
         return FAMILIES["technical"]
     return FAMILIES.get(family_id, FAMILIES["technical"])
@@ -130,4 +128,4 @@ def default_family_id() -> str:
     return "technical"
 
 
-__all__ = ["FAMILIES", "get_family", "list_families", "default_family_id"]
+__all__ = ["FAMILIES", "default_family_id", "get_family", "list_families"]

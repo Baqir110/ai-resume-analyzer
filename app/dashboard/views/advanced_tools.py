@@ -1,18 +1,20 @@
 """Advanced Tools Page - Bulk screening and diff preview."""
-import streamlit as st
+
 import pandas as pd
-from app.dashboard.helpers import make_api_request, get_api_base
-from app.dashboard.components import render_error_alert, render_diff_view
+import streamlit as st
+
+from app.dashboard.components import render_diff_view, render_error_alert
+from app.dashboard.helpers import get_api_base, make_api_request
 
 
 def render_advanced_tools():
     """Render advanced analysis tools."""
     st.header("Advanced tools")
-    
+
     tab1, tab2 = st.tabs(["🔍 Visual Bullet Diff", "👥 Bulk CV Screening"])
-    
+
     api_base = get_api_base()
-    
+
     # Bullet Diff
     with tab1:
         orig_text = st.text_area(
@@ -25,25 +27,25 @@ def render_advanced_tools():
             height=100,
             key="diff_opt",
         )
-        
+
         if st.button("Compare Bullets", width="stretch", type="primary", key="diff_compare_btn"):
             payload = {
-                'original_bullets': [x.strip() for x in orig_text.splitlines() if x.strip()],
-                'optimized_bullets': [x.strip() for x in opt_text.splitlines() if x.strip()],
+                "original_bullets": [x.strip() for x in orig_text.splitlines() if x.strip()],
+                "optimized_bullets": [x.strip() for x in opt_text.splitlines() if x.strip()],
             }
-            
+
             response = make_api_request(
                 f"{api_base}/api/v1/resume/diff-preview",
                 data=payload,
                 method="POST",
             )
-            
+
             if response and response.status_code == 200:
-                diffs = response.json().get('diffs', [])
+                diffs = response.json().get("diffs", [])
                 render_diff_view(diffs)
             else:
                 render_error_alert(response)
-    
+
     # Bulk Screening
     with tab2:
         bulk_job_desc = st.text_area(
@@ -57,7 +59,7 @@ def render_advanced_tools():
             accept_multiple_files=True,
             key="bulk_files_uploader",
         )
-        
+
         if st.button(
             "🚀 Run Bulk Analysis",
             type="primary",
@@ -69,26 +71,27 @@ def render_advanced_tools():
             else:
                 files_payload = [
                     (
-                        'resume_files',
+                        "resume_files",
                         (f.name, f.getvalue(), f.type or "application/octet-stream"),
                     )
                     for f in bulk_files
                 ]
-                
+
                 response = make_api_request(
                     f"{api_base}/api/v1/resume/analyze-bulk",
-                    data={'job_description': bulk_job_desc},
+                    data={"job_description": bulk_job_desc},
                     files=files_payload,
                 )
-                
+
                 if response and response.status_code == 200:
-                    results = response.json().get('rankings', [])
+                    results = response.json().get("rankings", [])
                     st.success(f"Successfully processed {len(results)} candidate resumes.")
-                    
+
                     df = pd.DataFrame(results)
                     if not df.empty:
                         cols = [
-                            c for c in ['filename', 'ats_score', 'keyword_density']
+                            c
+                            for c in ["filename", "ats_score", "keyword_density"]
                             if c in df.columns
                         ]
                         st.dataframe(df[cols], width="stretch", hide_index=True)

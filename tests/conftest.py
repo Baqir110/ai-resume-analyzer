@@ -22,7 +22,6 @@ import os
 
 import pytest
 
-
 # Stub values that CI or example files might set. If we see one of these,
 # treat the key as absent — the real service would reject it.
 _STUB_VALUES = {
@@ -40,10 +39,7 @@ _STUB_VALUES = {
 
 def _has_real_gateway_key() -> bool:
     """True only if a plausible (non-stub) gateway key is configured."""
-    key = (
-        os.getenv("EXPLABS_API_KEY", "").strip()
-        or os.getenv("EXPERIENTIAL_ORG_KEY", "").strip()
-    )
+    key = os.getenv("EXPLABS_API_KEY", "").strip() or os.getenv("EXPERIENTIAL_ORG_KEY", "").strip()
     return bool(key) and key not in _STUB_VALUES
 
 

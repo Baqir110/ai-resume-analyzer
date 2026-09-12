@@ -1,0 +1,8 @@
+Jane Doe
+Senior Platform Engineer
+Example GmbH | Berlin | Jan 2020 - Present
+- Designed and shipped a Kubernetes-based platform handling 5M requests/day
+- Reduced deployment time from 30min to 3min with CI/CD pipelines
+- Led team of 4 engineers, mentored 2 juniors
+Skills: Python, Docker, Kubernetes, PostgreSQL, AWS
+M.Sc. Computer Science | TU Berlin | 2018 - 2020

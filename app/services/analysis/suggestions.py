@@ -1,5 +1,4 @@
 # app/services/suggestions.py
-from typing import List
 
 # Only these prefixes represent actionable edits the LLM can apply.
 _ACTIONABLE_PREFIXES = (
@@ -23,8 +22,8 @@ _META_PREFIXES = (
 
 
 def generate_recommendations(
-    ats_score: float, missing_skills: List[str], matching_skills: List[str]
-) -> List[str]:
+    ats_score: float, missing_skills: list[str], matching_skills: list[str]
+) -> list[str]:
     """
     Generates actionable advice to achieve 100% ATS score compliance.
     """
@@ -75,7 +74,7 @@ def generate_recommendations(
     return recommendations
 
 
-def extract_actionable_suggestions(recommendations: List[str]) -> List[str]:
+def extract_actionable_suggestions(recommendations: list[str]) -> list[str]:
     """
     Returns only the recommendations that should be fed into the CV-generation
     prompt as hard constraints. Drops meta-advice (verification steps, generic
@@ -84,7 +83,7 @@ def extract_actionable_suggestions(recommendations: List[str]) -> List[str]:
     if not recommendations:
         return []
 
-    actionable: List[str] = []
+    actionable: list[str] = []
     for rec in recommendations:
         text = (rec or "").strip()
         if not text:

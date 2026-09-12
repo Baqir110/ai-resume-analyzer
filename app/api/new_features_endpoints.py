@@ -1,15 +1,16 @@
 """API endpoints for new features."""
-from fastapi import APIRouter, File, Form, UploadFile, HTTPException
-from typing import Optional, List
 
-from app.services.analysis.score_explainability import ScoreExplainabilityEngine
-from app.services.analysis.market_insights import MarketInsightsEngine
-from app.services.analysis.skill_roadmap import SkillProgressionTracker
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+
+from app.api.utils import parse_json_list as _parse_json_list
 from app.services.analysis.authenticity_checker import AuthenticityChecker
-from app.services.tracking.version_manager import ResumeVersionManager
-from app.services.tracking.collaborative_feedback import CollaborativeFeedbackManager
+from app.services.analysis.market_insights import MarketInsightsEngine
+from app.services.analysis.score_explainability import ScoreExplainabilityEngine
+from app.services.analysis.skill_roadmap import SkillProgressionTracker
 from app.services.career.interview_simulator import InterviewSimulator
 from app.services.parsing.resume_parser import extract_text_from_file
+from app.services.tracking.collaborative_feedback import CollaborativeFeedbackManager
+from app.services.tracking.version_manager import ResumeVersionManager
 
 router = APIRouter()
 
@@ -22,7 +23,35 @@ feedback_manager = CollaborativeFeedbackManager()
 interview_sim = InterviewSimulator()
 
 
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+# def _parse_json_list(raw: str | None, field_name: str) -> list[str]:
+#     """Parse a JSON-encoded list from a form field.
+
+#     Accepts either a JSON array (``["a","b"]``) or a comma-separated
+#     string (``"a,b,c"``) as a fallback for convenience.
+#     """
+#     if raw is None or not str(raw).strip():
+#         return []
+#     text = str(raw).strip()
+#     try:
+#         parsed = json.loads(text)
+#         if isinstance(parsed, list):
+#             return [str(x).strip() for x in parsed if str(x).strip()]
+#     except json.JSONDecodeError:
+#         pass
+#     # Fallback: comma-separated
+#     return [item.strip() for item in text.split(",") if item.strip()]
+
+
+# ---------------------------------------------------------------------------
 # Score Explainability
+# ---------------------------------------------------------------------------
+
+
 @router.post("/score-breakdown")
 async def score_breakdown(
     job_description: str = Form(...),
@@ -32,40 +61,74 @@ async def score_breakdown(
     resume_text = await extract_text_from_file(resume_file)
     if not resume_text:
         raise HTTPException(status_code=400, detail="Could not extract resume text")
-    
+
     breakdown = scope_engine.explain_score(resume_text, job_description)
     return {"status": "success", "breakdown": breakdown}
 
 
+# ---------------------------------------------------------------------------
 # Market Insights
+# ---------------------------------------------------------------------------
+
+
 @router.get("/market-insights")
 async def market_insights(
     role: str,
     location: str,
     seniority: str = "mid",
+    provider: str = "experiential",
+    route_mode: str = "experiential",
 ):
-    """Get job market intelligence for a role."""
-    insights = await market_engine.get_market_insights(role, location, seniority)
+    """Get AI-estimated job market intelligence for a role."""
+    insights = await market_engine.get_market_insights(
+        role,
+        location,
+        seniority,
+        provider=provider,
+        route_mode=route_mode,
+    )
     return {"status": "success", "insights": insights}
 
 
+# ---------------------------------------------------------------------------
 # Skill Roadmap
+# ---------------------------------------------------------------------------
+
+
 @router.post("/skill-roadmap")
 async def generate_skill_roadmap(
-    current_skills: List[str] = Form(...),
+    current_skills: str = Form(
+        ...,
+        description='JSON array of skills, e.g. ["python", "sql"]',
+    ),
     target_role: str = Form(...),
     months_available: int = Form(6),
+    provider: str = Form("experiential"),
+    route_mode: str = Form("experiential"),
 ):
-    """Generate personalized skill development roadmap."""
+    """Generate a personalised, AI-driven skill development roadmap."""
+    skills = _parse_json_list(current_skills, "current_skills")
+    if not skills:
+        raise HTTPException(
+            status_code=400,
+            detail="current_skills must contain at least one skill.",
+        )
+
     roadmap = await skill_tracker.generate_learning_roadmap(
-        current_skills,
+        skills,
         target_role,
         months_available,
+        provider=provider,
+        route_mode=route_mode,
     )
     return {"status": "success", "roadmap": roadmap}
 
 
+# ---------------------------------------------------------------------------
 # Resume Authenticity
+# ---------------------------------------------------------------------------
+
+
 @router.post("/check-authenticity")
 async def check_authenticity(
     resume_file: UploadFile = File(...),
@@ -74,20 +137,24 @@ async def check_authenticity(
     resume_text = await extract_text_from_file(resume_file)
     if not resume_text:
         raise HTTPException(status_code=400, detail="Could not extract resume text")
-    
+
     report = await auth_checker.check_authenticity(resume_text)
     return {"status": "success", "report": report}
 
 
+# ---------------------------------------------------------------------------
 # Resume Versioning
+# ---------------------------------------------------------------------------
+
+
 @router.post("/versions/save")
 async def save_resume_version(
     user_id: str = Form(...),
     original_text: str = Form(...),
     optimized_text: str = Form(...),
     ats_score: int = Form(...),
-    job_id: Optional[str] = Form(None),
-    notes: Optional[str] = Form(None),
+    job_id: str | None = Form(None),
+    notes: str | None = Form(None),
 ):
     """Save a resume version."""
     version_id = version_manager.save_version(
@@ -118,7 +185,11 @@ async def compare_versions(
     return {"status": "success", "comparison": comparison}
 
 
+# ---------------------------------------------------------------------------
 # Interview Simulator
+# ---------------------------------------------------------------------------
+
+
 @router.post("/interview/question")
 async def generate_interview_question(
     family: str = Form(...),
@@ -133,24 +204,35 @@ async def generate_interview_question(
 async def evaluate_interview_answer(
     question_id: int = Form(...),
     user_answer: str = Form(...),
-    expected_topics: List[str] = Form(...),
+    expected_topics: str = Form(
+        ...,
+        description='JSON array of expected topics, e.g. ["oop", "git"]',
+    ),
 ):
-    """Evaluate interview practice answer."""
+    """Evaluate interview practice answer.
+
+    ``expected_topics`` must be a JSON array string or comma-separated list.
+    """
+    topics = _parse_json_list(expected_topics, "expected_topics")
     feedback = await interview_sim.evaluate_answer(
         question_id,
         user_answer,
-        expected_topics,
+        topics,
     )
     return {"status": "success", "feedback": feedback}
 
 
+# ---------------------------------------------------------------------------
 # Collaborative Feedback
+# ---------------------------------------------------------------------------
+
+
 @router.post("/feedback/thread")
 async def create_feedback_thread(
     resume_id: int = Form(...),
     section: str = Form(...),
     author: str = Form(...),
-    line_number: Optional[int] = Form(None),
+    line_number: int | None = Form(None),
 ):
     """Create feedback thread for resume section."""
     thread_id = feedback_manager.create_feedback_thread(
@@ -167,7 +249,7 @@ async def add_feedback_comment(
     thread_id: int = Form(...),
     author: str = Form(...),
     comment: str = Form(...),
-    suggestion: Optional[str] = Form(None),
+    suggestion: str | None = Form(None),
     category: str = Form("clarity"),
     severity: str = Form("medium"),
 ):

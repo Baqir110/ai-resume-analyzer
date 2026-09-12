@@ -1,271 +1,212 @@
-"""Resume authenticity and plagiarism detection."""
+"""Resume authenticity and plagiarism signal detection.
+
+Combines deterministic heuristics (AI-phrase density, buzzword overload,
+quantification patterns) with an LLM deep read. Decision-support tool, not
+a verdict — every signal is surfaced with its evidence.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
 import logging
-from typing import Dict, List, Any, Tuple
-import hashlib
+import re
+from datetime import datetime, timezone
+from typing import Any
+
+from app.services.llm.provider import LLMService
 
 logger = logging.getLogger(__name__)
 
 
+_AI_TELLS = [
+    r"\bleverag(?:e|ed|ing)\b",
+    r"\bspearhead(?:ed|ing)\b",
+    r"\bsynerg(?:y|ies|istic)\b",
+    r"\bcutting[- ]edge\b",
+    r"\bstate[- ]of[- ]the[- ]art\b",
+    r"\bgame[- ]chang(?:er|ing)\b",
+    r"\bpassionate about\b",
+    r"\bdetail[- ]oriented\b",
+    r"\bresults[- ]driven\b",
+    r"\bproven track record\b",
+    r"\bdynamic professional\b",
+    r"\binnovative solutions?\b",
+    r"\bholistic approach\b",
+    r"\bseamless(?:ly)?\b",
+]
+
+_VAGUE_BUZZWORDS = [
+    "synergy",
+    "paradigm",
+    "disrupt",
+    "innovate",
+    "transformative",
+    "revolutionize",
+    "world-class",
+    "best-in-class",
+    "go-to-market",
+    "hyper-growth",
+    "thought leader",
+    "value add",
+    "move the needle",
+]
+
+
 class AuthenticityChecker:
-    """Checks resume authenticity and detects plagiarism."""
-    
-    def __init__(self):
-        self.flagged_patterns = self._initialize_flagged_patterns()
-        self.common_phrases = self._initialize_common_phrases()
-    
+    """Flags resumes that show signs of AI generation or low authenticity."""
+
     async def check_authenticity(
         self,
         resume_text: str,
-        check_plagiarism: bool = True,
-    ) -> Dict[str, Any]:
-        """Check resume for authenticity and plagiarism.
-        
-        Returns:
-            Authenticity report with score and flagged sections
-        """
-        plagiarism_report = await self._check_plagiarism(resume_text) if check_plagiarism else None
-        generic_report = self._check_generic_language(resume_text)
-        repetition_report = self._check_repetition(resume_text)
-        pattern_report = self._check_suspicious_patterns(resume_text)
-        
-        authenticity_score = self._compute_authenticity_score(
-            plagiarism_report,
-            generic_report,
-            repetition_report,
-            pattern_report,
-        )
-        
+        provider: str = "experiential",
+        route_mode: str = "experiential",
+    ) -> dict[str, Any]:
+        text = (resume_text or "").strip()
+        if not text:
+            return {
+                "error": "empty resume text",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        heuristics = self._run_heuristics(text)
+        llm_analysis = await self._run_llm_analysis(text, provider=provider, route_mode=route_mode)
+        overall_score = self._combine_scores(heuristics, llm_analysis)
+
         return {
-            'authenticity_score': authenticity_score,
-            'score_interpretation': self._interpret_score(authenticity_score),
-            'plagiarism_analysis': plagiarism_report,
-            'generic_language_analysis': generic_report,
-            'repetition_analysis': repetition_report,
-            'suspicious_patterns': pattern_report,
-            'recommendation': self._generate_recommendation(authenticity_score),
-            'risk_level': self._assess_risk_level(authenticity_score),
+            "authenticity_score": overall_score,
+            "verdict": self._verdict_from_score(overall_score),
+            "heuristics": heuristics,
+            "llm_analysis": llm_analysis,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
         }
-    
-    async def _check_plagiarism(
-        self,
-        resume_text: str,
-    ) -> Dict[str, Any]:
-        """Check for plagiarized content.
-        
-        In production, would integrate with Turnitin or similar service.
-        """
-        # Placeholder implementation
-        sentences = resume_text.split('.')
-        
-        flagged_sections = []
-        
-        for sentence in sentences:
-            if self._is_suspicious_sentence(sentence):
-                flagged_sections.append({
-                    'text': sentence.strip(),
-                    'similarity': 0.85,
-                    'potential_source': 'LinkedIn Resume Template #42',
-                    'severity': 'high',
-                })
-        
-        overall_plagiarism = len(flagged_sections) / max(len(sentences), 1)
-        
-        return {
-            'plagiarism_percentage': round(overall_plagiarism * 100, 1),
-            'flagged_sections': flagged_sections,
-            'status': 'suspicious' if overall_plagiarism > 0.2 else 'clean',
-        }
-    
-    def _check_generic_language(
-        self,
-        resume_text: str,
-    ) -> Dict[str, Any]:
-        """Check for overuse of generic language."""
-        resume_lower = resume_text.lower()
-        
-        generic_count = 0
-        for phrase in self.common_phrases:
-            generic_count += resume_lower.count(phrase.lower())
-        
-        total_words = len(resume_text.split())
-        genericity_score = (generic_count / max(total_words, 1)) * 100
-        
-        flagged_phrases = []
-        for phrase in self.common_phrases:
-            if phrase.lower() in resume_lower:
-                flagged_phrases.append(phrase)
-        
-        return {
-            'genericity_score': round(min(genericity_score, 100), 1),
-            'flagged_phrases': flagged_phrases[:10],
-            'interpretation': 'High generic language' if genericity_score > 20 else 'Authentic language',
-        }
-    
-    def _check_repetition(
-        self,
-        resume_text: str,
-    ) -> Dict[str, Any]:
-        """Check for excessive word repetition."""
-        words = resume_text.lower().split()
-        word_freq = {}
-        
-        for word in words:
-            if len(word) > 4:  # Only count meaningful words
-                word_freq[word] = word_freq.get(word, 0) + 1
-        
-        # Find most repeated words
-        most_repeated = sorted(
-            word_freq.items(),
-            key=lambda x: x[1],
-            reverse=True,
-        )[:5]
-        
-        repetition_score = sum(count for _, count in most_repeated) / len(words) * 100
-        
-        return {
-            'repetition_score': round(repetition_score, 1),
-            'most_repeated_words': [
-                {'word': word, 'count': count} for word, count in most_repeated
-            ],
-            'interpretation': 'High repetition' if repetition_score > 15 else 'Good variety',
-        }
-    
-    def _check_suspicious_patterns(
-        self,
-        resume_text: str,
-    ) -> List[Dict[str, Any]]:
-        """Check for suspicious patterns."""
-        suspicious = []
-        
-        # Check for unrealistic achievements
-        unrealistic_patterns = [
-            ('increased revenue', '1000%'),
-            ('improved efficiency', '500%'),
-            ('reduced costs', '99%'),
-        ]
-        
-        for pattern, metric in unrealistic_patterns:
-            if pattern.lower() in resume_text.lower() and metric in resume_text:
-                suspicious.append({
-                    'pattern': f"{pattern} by {metric}",
-                    'type': 'unrealistic_claim',
-                    'severity': 'high',
-                    'suggestion': 'Verify these metrics with data',
-                })
-        
-        # Check for AI-generated indicators
-        ai_phrases = ['leveraging', 'synergizing', 'driving innovation', 'paradigm shift']
-        ai_count = sum(1 for phrase in ai_phrases if phrase in resume_text.lower())
-        
-        if ai_count >= 3:
-            suspicious.append({
-                'pattern': 'Potential AI-generated content',
-                'type': 'ai_generated',
-                'severity': 'medium',
-                'ai_phrases_detected': ai_count,
-                'suggestion': 'Add more personal, specific details',
-            })
-        
-        return suspicious
-    
-    def _compute_authenticity_score(
-        self,
-        plagiarism: Dict,
-        generic: Dict,
-        repetition: Dict,
-        patterns: List,
-    ) -> float:
-        """Compute overall authenticity score (0-100, higher = more authentic)."""
+
+    # ------------------------------------------------------------------
+    # Heuristic layer
+    # ------------------------------------------------------------------
+
+    def _run_heuristics(self, text: str) -> dict[str, Any]:
+        lower = text.lower()
+        word_count = max(1, len(text.split()))
+
+        ai_hits: list[str] = []
+        for pattern in _AI_TELLS:
+            matches = re.findall(pattern, lower, flags=re.IGNORECASE)
+            if matches:
+                ai_hits.append(matches[0])
+
+        buzz_hits = [b for b in _VAGUE_BUZZWORDS if b in lower]
+
+        number_hits = len(re.findall(r"\b\d+(?:[.,]\d+)?%?\b", text))
+        numbers_per_100_words = (number_hits / word_count) * 100
+
+        ai_density = len(ai_hits) / word_count * 100
+        buzz_density = len(buzz_hits) / word_count * 100
+
         score = 100.0
-        
-        # Plagiarism impact
-        if plagiarism:
-            score -= plagiarism['plagiarism_percentage'] * 0.8
-        
-        # Generic language impact
-        score -= generic['genericity_score'] * 0.4
-        
-        # Repetition impact
-        score -= repetition['repetition_score'] * 0.3
-        
-        # Suspicious patterns impact
-        score -= len(patterns) * 10
-        
-        return max(0, min(100, score))
-    
-    def _interpret_score(self, score: float) -> str:
-        """Interpret authenticity score."""
-        if score >= 85:
-            return "Highly authentic - Original content with personal voice"
-        elif score >= 70:
-            return "Authentic - Mostly original with some template language"
-        elif score >= 50:
-            return "Moderately authentic - Mix of original and template content"
-        elif score >= 30:
-            return "Questionable - Significant generic or copied language detected"
-        else:
-            return "Likely plagiarized or AI-generated - Requires review"
-    
-    def _assess_risk_level(self, score: float) -> str:
-        """Assess plagiarism/authenticity risk level."""
+        score -= min(40.0, ai_density * 200.0)
+        score -= min(30.0, buzz_density * 300.0)
+        if numbers_per_100_words < 1.0:
+            score -= 15.0
+        if word_count < 150:
+            score -= 10.0
+
+        return {
+            "score": max(0, min(100, round(score))),
+            "ai_phrase_hits": ai_hits,
+            "vague_buzzword_hits": buzz_hits,
+            "numbers_per_100_words": round(numbers_per_100_words, 2),
+            "word_count": word_count,
+        }
+
+    # ------------------------------------------------------------------
+    # LLM layer
+    # ------------------------------------------------------------------
+
+    async def _run_llm_analysis(self, text: str, provider: str, route_mode: str) -> dict[str, Any]:
+        prompt = (
+            "You are a resume authenticity analyst. Read the resume below and "
+            "produce a JSON assessment.\n\n"
+            "Return ONLY valid JSON with this schema:\n"
+            "{\n"
+            '  "ai_generation_likelihood": <0-100>,\n'
+            '  "fabrication_risk": <0-100>,\n'
+            '  "plagiarism_risk": <0-100>,\n'
+            '  "specificity_score": <0-100>,\n'
+            '  "red_flags": ["<short flag>", ...],\n'
+            '  "strengths": ["<short strength>", ...],\n'
+            '  "recommendations": ["<short action>", ...],\n'
+            '  "summary": "<2-3 sentence assessment>"\n'
+            "}\n\n"
+            "Rules:\n"
+            "- Base judgement on evidence in the text, not vibes.\n"
+            "- Red flags should cite specific phrases or patterns.\n"
+            "- Genuine resumes typically score 0-30 on AI/fabrication.\n\n"
+            f"RESUME:\n{text[:6000]}"
+        )
+
+        try:
+            raw = await asyncio.to_thread(
+                LLMService.generate,
+                prompt,
+                provider=provider,
+                route_mode=route_mode,
+            )
+            parsed = self._parse_json(raw)
+            for key in (
+                "ai_generation_likelihood",
+                "fabrication_risk",
+                "plagiarism_risk",
+                "specificity_score",
+            ):
+                parsed[key] = max(0, min(100, int(parsed.get(key, 0) or 0)))
+            parsed.setdefault("red_flags", [])
+            parsed.setdefault("strengths", [])
+            parsed.setdefault("recommendations", [])
+            parsed.setdefault("summary", "")
+            return parsed
+        except Exception as exc:
+            logger.warning("authenticity LLM call failed: %s", exc)
+            return {
+                "ai_generation_likelihood": 0,
+                "fabrication_risk": 0,
+                "plagiarism_risk": 0,
+                "specificity_score": 0,
+                "red_flags": [],
+                "strengths": [],
+                "recommendations": [],
+                "summary": f"LLM analysis unavailable: {exc}"[:200],
+                "_error": str(exc)[:200],
+            }
+
+    def _parse_json(self, raw: str) -> dict[str, Any]:
+        text = (raw or "").strip()
+        if text.startswith("```"):
+            text = text.split("```", 2)[1]
+            text = text.removeprefix("json")
+            text = text.rsplit("```", 1)[0]
+        return json.loads(text.strip())
+
+    # ------------------------------------------------------------------
+    # Scoring
+    # ------------------------------------------------------------------
+
+    def _combine_scores(self, heuristics: dict[str, Any], llm: dict[str, Any]) -> int:
+        heuristic_score = heuristics.get("score", 50)
+        llm_authenticity = 100 - max(
+            llm.get("ai_generation_likelihood", 0),
+            llm.get("fabrication_risk", 0),
+            llm.get("plagiarism_risk", 0),
+        )
+        return round(heuristic_score * 0.6 + llm_authenticity * 0.4)
+
+    def _verdict_from_score(self, score: int) -> str:
         if score >= 80:
-            return 'low'
-        elif score >= 60:
-            return 'medium'
-        elif score >= 40:
-            return 'high'
-        else:
-            return 'critical'
-    
-    def _generate_recommendation(self, score: float) -> str:
-        """Generate recommendation based on score."""
-        if score >= 85:
-            return "Resume appears authentic. No action needed."
-        elif score >= 70:
-            return "Resume looks good. Consider adding more specific, personal details."
-        elif score >= 50:
-            return "Review and personalize sections with generic language."
-        else:
-            return "Resume requires significant revision. Replace template language with genuine achievements."
-    
-    def _is_suspicious_sentence(self, sentence: str) -> bool:
-        """Check if a sentence is suspicious."""
-        # Placeholder - would use similarity matching in production
-        sentence_lower = sentence.lower().strip()
-        suspicious_starts = [
-            'managed team of',
-            'responsible for',
-            'worked on',
-        ]
-        
-        return any(s in sentence_lower for s in suspicious_starts)
-    
-    def _initialize_flagged_patterns(self) -> List[str]:
-        """Initialize patterns that indicate plagiarism."""
-        return [
-            'core competencies',
-            'results-driven',
-            'self-starter',
-            'team player',
-            'detail-oriented',
-        ]
-    
-    def _initialize_common_phrases(self) -> List[str]:
-        """Initialize common generic phrases."""
-        return [
-            'Managed team of',
-            'Responsible for',
-            'Worked on',
-            'Helped develop',
-            'Contributed to',
-            'Led initiative',
-            'Spearheaded project',
-            'Drove adoption of',
-            'Leveraged skills',
-            'Synergized with',
-            'Optimized process',
-            'Improved efficiency',
-            'Increased revenue',
-            'Reduced costs',
-            'Delivered value',
-        ]
+            return "highly_authentic"
+        if score >= 60:
+            return "likely_authentic"
+        if score >= 40:
+            return "mixed_signals"
+        if score >= 20:
+            return "suspicious"
+        return "highly_suspicious"

@@ -1,5 +1,6 @@
 import re
-from typing import Dict, Any, List
+from typing import Any
+
 from app.services.analysis.ats_analyzer import analyze_resume_content
 
 
@@ -25,7 +26,7 @@ class AuditMatrixService:
     @classmethod
     def run_full_audit(
         cls, resume_text: str, job_description: str, file_type: str = "pdf"
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Calculates a detailed 4-part audit breakdown of the candidate's resume.
         """
@@ -39,15 +40,10 @@ class AuditMatrixService:
         matched_soft = list(
             cls.SOFT_SKILLS_TAXONOMY.intersection(jd_words).intersection(resume_words)
         )
-        missing_soft = list(
-            cls.SOFT_SKILLS_TAXONOMY.intersection(jd_words) - resume_words
-        )
+        missing_soft = list(cls.SOFT_SKILLS_TAXONOMY.intersection(jd_words) - resume_words)
 
         soft_score = (
-            int(
-                (len(matched_soft) / max(1, len(matched_soft) + len(missing_soft)))
-                * 100
-            )
+            int((len(matched_soft) / max(1, len(matched_soft) + len(missing_soft))) * 100)
             if (matched_soft or missing_soft)
             else 80
         )
@@ -68,14 +64,10 @@ class AuditMatrixService:
         quantified_lines = 0
 
         for line in lines:
-            if any(
-                re.search(pattern, line, re.IGNORECASE) for pattern in metric_patterns
-            ):
+            if any(re.search(pattern, line, re.IGNORECASE) for pattern in metric_patterns):
                 quantified_lines += 1
 
-        impact_score = (
-            int((quantified_lines / max(1, len(lines))) * 100) if lines else 50
-        )
+        impact_score = int((quantified_lines / max(1, len(lines))) * 100) if lines else 50
 
         # 3. Formatting & ATS Safety Check
         format_issues = []

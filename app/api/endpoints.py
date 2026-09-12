@@ -1,24 +1,16 @@
 import functools
 import io
-import json
 import time
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import List, Optional
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt
-from fastapi import (
-    APIRouter,
-    File,
-    Form,
-    HTTPException,
-    UploadFile,
-)
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app.api.utils import decode_suggestions as _decode_suggestions
 from app.core.event_log import log_event, new_request_id, set_request_id
 from app.models.schemas import AnalysisResponse
 from app.services.analysis.ats_analyzer import analyze_resume_content
@@ -42,10 +34,8 @@ from app.services.cv.optimizer import (
 from app.services.llm import quota_tracker
 from app.services.llm.provider import LOG_PATH, LLMService
 from app.services.parsing.resume_parser import extract_text_from_file
-from app.services.tracking.tracker import (
-    ApplicationTrackerService,
-    DB_PATH as TRACKER_DB_PATH,
-)
+from app.services.tracking.tracker import DB_PATH as TRACKER_DB_PATH
+from app.services.tracking.tracker import ApplicationTrackerService
 
 router = APIRouter()
 
@@ -121,44 +111,22 @@ def _log_pipeline(operation: str):
 
 
 # ============================================================
-# SHARED HELPERS
-# ============================================================
-
-
-def _decode_suggestions(raw: Optional[str]) -> List[str]:
-    if not raw:
-        return []
-    raw = raw.strip()
-    if not raw:
-        return []
-
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, list):
-            return [str(item).strip() for item in parsed if str(item).strip()]
-    except json.JSONDecodeError:
-        pass
-
-    return [line.strip() for line in raw.splitlines() if line.strip()]
-
-
-# ============================================================
 # REQUEST SCHEMAS
 # ============================================================
 
 
 class BulletDiffRequest(BaseModel):
-    original_bullets: List[str]
-    optimized_bullets: List[str]
+    original_bullets: list[str]
+    optimized_bullets: list[str]
 
 
 class TrackerCreateRequest(BaseModel):
     company_name: str
     job_title: str
-    job_url: Optional[str] = ""
-    ats_score: Optional[int] = 0
-    status: Optional[str] = "Saved"
-    notes: Optional[str] = ""
+    job_url: str | None = ""
+    ats_score: int | None = 0
+    status: str | None = "Saved"
+    notes: str | None = ""
 
 
 class TrackerStatusUpdate(BaseModel):
@@ -184,7 +152,7 @@ async def diff_preview(payload: BulletDiffRequest):
 @router.post("/analyze-bulk")
 async def analyze_bulk(
     job_description: str = Form(...),
-    resume_files: List[UploadFile] = File(...),
+    resume_files: list[UploadFile] = File(...),
 ):
     if not resume_files:
         raise HTTPException(status_code=400, detail="No resume files uploaded.")
@@ -195,9 +163,7 @@ async def analyze_bulk(
             content = await file.read()
             files_data.append((content, file.filename))
 
-        ranked_candidates = await BulkAnalyzerService.process_batch(
-            files_data, job_description
-        )
+        ranked_candidates = await BulkAnalyzerService.process_batch(files_data, job_description)
 
         return {
             "status": "success",
@@ -240,10 +206,10 @@ async def audit_matrix_endpoint(
 async def generate_cover_letter_endpoint(
     job_description: str = Form(...),
     resume_file: UploadFile = File(...),
-    company_name: Optional[str] = Form("Target Company"),
-    tone: Optional[str] = Form("formal"),
-    template: Optional[str] = Form("classic_professional"),
-    provider: Optional[str] = Form("experiential"),
+    company_name: str | None = Form("Target Company"),
+    tone: str | None = Form("formal"),
+    template: str | None = Form("classic_professional"),
+    provider: str | None = Form("experiential"),
 ):
     resume_text = await extract_text_from_file(resume_file)
     if not resume_text:
@@ -269,8 +235,8 @@ async def generate_cover_letter_endpoint(
 async def interview_prep_endpoint(
     job_description: str = Form(...),
     resume_file: UploadFile = File(...),
-    family: Optional[str] = Form("technical"),
-    provider: Optional[str] = Form("experiential"),
+    family: str | None = Form("technical"),
+    provider: str | None = Form("experiential"),
 ):
     resume_text = await extract_text_from_file(resume_file)
     if not resume_text:
@@ -297,8 +263,8 @@ async def interview_prep_endpoint(
 @router.post("/linkedin-optimize")
 async def linkedin_optimize_endpoint(
     resume_file: UploadFile = File(...),
-    target_role: Optional[str] = Form("Software Engineer"),
-    provider: Optional[str] = Form("experiential"),
+    target_role: str | None = Form("Software Engineer"),
+    provider: str | None = Form("experiential"),
 ):
     resume_text = await extract_text_from_file(resume_file)
     if not resume_text:
@@ -461,7 +427,7 @@ async def model_catalog(provider: str = "experiential"):
 
 
 @router.get("/quota-status")
-async def quota_status(provider: Optional[str] = None):
+async def quota_status(provider: str | None = None):
     try:
         if provider:
             data = quota_tracker.build_quota_status(
@@ -485,7 +451,7 @@ async def quota_status(provider: Optional[str] = None):
 
 
 @router.get("/quota-events")
-async def quota_events(provider: Optional[str] = None, limit: int = 50):
+async def quota_events(provider: str | None = None, limit: int = 50):
     limit = max(1, min(limit, 200))
     events = quota_tracker.recent_rate_limit_events(provider=provider, limit=limit)
     return {
@@ -553,9 +519,9 @@ async def career_options():
 async def analyze_resume(
     job_description: str = Form(...),
     resume_file: UploadFile = File(...),
-    provider: Optional[str] = Form("experiential"),
-    model_name: Optional[str] = Form(None),
-    route_mode: Optional[str] = Form("experiential"),
+    provider: str | None = Form("experiential"),
+    model_name: str | None = Form(None),
+    route_mode: str | None = Form("experiential"),
 ):
     if not job_description.strip():
         raise HTTPException(
@@ -647,11 +613,11 @@ async def analyze_resume(
 async def generate_full_cv_endpoint(
     job_description: str = Form(...),
     resume_file: UploadFile = File(...),
-    provider: Optional[str] = Form("experiential"),
-    model_name: Optional[str] = Form(None),
-    route_mode: Optional[str] = Form("experiential"),
-    layout_style: Optional[str] = Form("auto"),
-    improvement_suggestions: Optional[str] = Form(None),
+    provider: str | None = Form("experiential"),
+    model_name: str | None = Form(None),
+    route_mode: str | None = Form("experiential"),
+    layout_style: str | None = Form("auto"),
+    improvement_suggestions: str | None = Form(None),
 ):
     resume_text = await extract_text_from_file(resume_file)
 
@@ -690,14 +656,8 @@ async def generate_full_cv_endpoint(
 
     return StreamingResponse(
         io.BytesIO(docx_bytes),
-        media_type=(
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ),
-        headers={
-            "Content-Disposition": (
-                "attachment; filename=Tailored_Optimized_Resume.docx"
-            )
-        },
+        media_type=("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        headers={"Content-Disposition": ("attachment; filename=Tailored_Optimized_Resume.docx")},
     )
 
 
@@ -711,12 +671,12 @@ async def generate_full_cv_endpoint(
 async def generate_german_cv_endpoint(
     job_description: str = Form(...),
     resume_file: UploadFile = File(...),
-    layout_style: Optional[str] = Form("auto"),
-    template_style: Optional[str] = Form(None),
-    provider: Optional[str] = Form("experiential"),
-    model_name: Optional[str] = Form(None),
-    route_mode: Optional[str] = Form("experiential"),
-    improvement_suggestions: Optional[str] = Form(None),
+    layout_style: str | None = Form("auto"),
+    template_style: str | None = Form(None),
+    provider: str | None = Form("experiential"),
+    model_name: str | None = Form(None),
+    route_mode: str | None = Form("experiential"),
+    improvement_suggestions: str | None = Form(None),
 ):
     selected_style = template_style or layout_style or "auto"
 
@@ -768,11 +728,7 @@ async def generate_german_cv_endpoint(
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": (
-                "attachment; " f"filename=CV_{selected_style}.pdf"
-            )
-        },
+        headers={"Content-Disposition": (f"attachment; filename=CV_{selected_style}.pdf")},
     )
 
 
@@ -786,12 +742,12 @@ async def generate_german_cv_endpoint(
 async def generate_tex_cv_endpoint(
     job_description: str = Form(...),
     resume_file: UploadFile = File(...),
-    layout_style: Optional[str] = Form("auto"),
-    template_style: Optional[str] = Form(None),
-    provider: Optional[str] = Form("experiential"),
-    model_name: Optional[str] = Form(None),
-    route_mode: Optional[str] = Form("experiential"),
-    improvement_suggestions: Optional[str] = Form(None),
+    layout_style: str | None = Form("auto"),
+    template_style: str | None = Form(None),
+    provider: str | None = Form("experiential"),
+    model_name: str | None = Form(None),
+    route_mode: str | None = Form("experiential"),
+    improvement_suggestions: str | None = Form(None),
 ):
     selected_style = template_style or layout_style or "auto"
 
@@ -835,11 +791,7 @@ async def generate_tex_cv_endpoint(
     return StreamingResponse(
         io.BytesIO(latex_code.encode("utf-8")),
         media_type="text/plain",
-        headers={
-            "Content-Disposition": (
-                "attachment; " f"filename=CV_{selected_style}.tex"
-            )
-        },
+        headers={"Content-Disposition": (f"attachment; filename=CV_{selected_style}.tex")},
     )
 
 

@@ -1,5 +1,5 @@
 import re
-from typing import Any, Dict, Optional
+from typing import Any
 
 from app.services.career.cover_letter_templates import get_template
 from app.services.llm.provider import LLMService
@@ -21,7 +21,7 @@ def _escape_latex(text: str) -> str:
         "^": r"\textasciicircum{}",
         "\\": r"\textbackslash{}",
     }
-    pattern = re.compile("|".join(re.escape(key) for key in chars.keys()))
+    pattern = re.compile("|".join(re.escape(key) for key in chars))
     return pattern.sub(lambda match: chars[match.group(0)], text)
 
 
@@ -33,9 +33,9 @@ class CoverLetterService:
         job_description: str,
         company_name: str = "Target Company",
         tone: str = "formal",
-        template: Optional[str] = "classic_professional",
+        template: str | None = "classic_professional",
         provider: str = "gemini",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Generates a cover letter, a cold outreach email, and raw LaTeX source.
 
@@ -57,9 +57,7 @@ class CoverLetterService:
             ),
         }
 
-        selected_tone = tone_instructions.get(
-            tone.lower(), tone_instructions["formal"]
-        )
+        selected_tone = tone_instructions.get(tone.lower(), tone_instructions["formal"])
 
         prompt = f"""
 Write a tailored cover letter and a cold email for {company_name}.
@@ -73,8 +71,8 @@ STYLE GUIDELINES
   or "my proven track record."
 - Tone: {selected_tone}
 
-LETTER STRUCTURE — {template_def['label']}
-{template_def['description']}
+LETTER STRUCTURE — {template_def["label"]}
+{template_def["description"]}
 
 {template_snippet}
 
@@ -108,13 +106,9 @@ JOB DESCRIPTION:
         )
 
         parts = raw_response.split("---SECTION_BREAK---")
-        cover_letter_body = (
-            parts[0].strip() if len(parts) > 0 else raw_response.strip()
-        )
+        cover_letter_body = parts[0].strip() if len(parts) > 0 else raw_response.strip()
         cold_outreach_body = (
-            parts[1].strip()
-            if len(parts) > 1
-            else "Outreach message generation unavailable."
+            parts[1].strip() if len(parts) > 1 else "Outreach message generation unavailable."
         )
 
         tex_source = cls._build_latex_cover_letter(cover_letter_body, company_name)
@@ -131,9 +125,7 @@ JOB DESCRIPTION:
 
     @staticmethod
     def _build_latex_cover_letter(body_text: str, company_name: str) -> str:
-        safe_body = _escape_latex(body_text).replace(
-            "\n\n", "\n\n\\vspace{0.8em}\n"
-        )
+        safe_body = _escape_latex(body_text).replace("\n\n", "\n\n\\vspace{0.8em}\n")
         safe_company = _escape_latex(company_name)
 
         return rf"""\documentclass[11pt,a4paper]{{article}}

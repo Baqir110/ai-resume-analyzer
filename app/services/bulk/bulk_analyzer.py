@@ -1,6 +1,6 @@
 import asyncio
 import io
-from typing import List, Dict, Any
+from typing import Any
 
 from fastapi import UploadFile
 
@@ -12,7 +12,7 @@ class BulkAnalyzerService:
     @staticmethod
     async def analyze_single_cv(
         file_bytes: bytes, filename: str, job_description: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Parses and evaluates a single candidate file against the job description.
         """
@@ -43,14 +43,13 @@ class BulkAnalyzerService:
 
     @classmethod
     async def process_batch(
-        cls, files: List[tuple[bytes, str]], job_description: str
-    ) -> List[Dict[str, Any]]:
+        cls, files: list[tuple[bytes, str]], job_description: str
+    ) -> list[dict[str, Any]]:
         """
         Executes parallel analysis across uploaded CV files and ranks results.
         """
         tasks = [
-            cls.analyze_single_cv(content, filename, job_description)
-            for content, filename in files
+            cls.analyze_single_cv(content, filename, job_description) for content, filename in files
         ]
 
         results = await asyncio.gather(*tasks, return_exceptions=True)

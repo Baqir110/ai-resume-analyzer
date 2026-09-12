@@ -1,29 +1,3 @@
-services:
-  backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: ai-resume-analyzer:latest
-    container_name: ai-resume-backend
-    command: >
-      uvicorn app.main:app
-        --host 0.0.0.0
-        --port 8000
-    ports:
-      - "8000:8000"
-    env_file:
-      - .env
-    volumes:
-      # Persist the event log and SQLite DB across restarts
-      - ./data:/app/data
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/v1/resume/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-    restart: unless-stopped
-
   dashboard:
     build:
       context: .
@@ -31,7 +5,7 @@ services:
     image: ai-resume-analyzer:latest
     container_name: ai-resume-dashboard
     command: >
-      streamlit run app/dashboard.py
+      streamlit run app/dashboard/main.py
         --server.address 0.0.0.0
         --server.port 8501
         --server.headless true
@@ -41,7 +15,6 @@ services:
     env_file:
       - .env
     environment:
-      # Override the API base so Streamlit talks to the backend container
       FASTAPI_API_BASE: http://backend:8000
     depends_on:
       backend:

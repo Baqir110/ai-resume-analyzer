@@ -13,14 +13,14 @@ import sqlite3
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 # Canonical status values used by the tracker. Kept here so the analytics
 # layer doesn't need to import the tracker service (avoids coupling).
 _KNOWN_STATUSES = ("Saved", "Applied", "Interview", "Offer", "Rejected", "Withdrawn")
 
 
-def _parse_iso(ts: str) -> Optional[datetime]:
+def _parse_iso(ts: str) -> datetime | None:
     if not ts:
         return None
     try:
@@ -32,10 +32,10 @@ def _parse_iso(ts: str) -> Optional[datetime]:
         return None
 
 
-def _load_events(log_path: Path, since_hours: Optional[int]) -> list[dict]:
+def _load_events(log_path: Path, since_hours: int | None) -> list[dict]:
     if not log_path.exists():
         return []
-    cutoff: Optional[datetime] = None
+    cutoff: datetime | None = None
     if since_hours is not None:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
 
@@ -81,7 +81,7 @@ def _load_applications(db_path: Path) -> list[dict]:
 def compute_analytics(
     log_path: Path,
     db_path: Path,
-    since_hours: Optional[int] = 24 * 30,
+    since_hours: int | None = 24 * 30,
 ) -> dict[str, Any]:
     """
     Aggregate stats from the pipeline log and the tracker DB.
@@ -246,12 +246,8 @@ def compute_analytics(
     }
 
     days_sorted = sorted(set(list(tokens_by_day.keys()) + list(apps_by_day.keys())))
-    tokens_series = [
-        {"date": d, "tokens": tokens_by_day.get(d, 0)} for d in days_sorted
-    ]
-    cost_series = [
-        {"date": d, "cost": round(cost_by_day.get(d, 0.0), 6)} for d in days_sorted
-    ]
+    tokens_series = [{"date": d, "tokens": tokens_by_day.get(d, 0)} for d in days_sorted]
+    cost_series = [{"date": d, "cost": round(cost_by_day.get(d, 0.0), 6)} for d in days_sorted]
     apps_series = [{"date": d, "count": apps_by_day.get(d, 0)} for d in days_sorted]
 
     return {
@@ -271,14 +267,10 @@ def compute_analytics(
             "total_calls": total_calls,
             "completed_calls": completed_calls,
             "failed_calls": failed_calls,
-            "failure_rate": (
-                round(failed_calls / total_calls, 4) if total_calls else 0.0
-            ),
+            "failure_rate": (round(failed_calls / total_calls, 4) if total_calls else 0.0),
             "total_tokens": total_tokens,
             "total_cost_usd": round(total_cost, 6),
-            "avg_duration_ms": (
-                round(duration_sum / duration_count, 1) if duration_count else 0.0
-            ),
+            "avg_duration_ms": (round(duration_sum / duration_count, 1) if duration_count else 0.0),
             "calls_by_provider": dict(calls_by_provider),
             "calls_by_model": dict(calls_by_model.most_common(10)),
             "tokens_by_day": tokens_series,

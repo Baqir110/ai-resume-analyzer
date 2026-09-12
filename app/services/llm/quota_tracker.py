@@ -21,7 +21,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +49,7 @@ def _load_quota_from_env(provider: str) -> dict[str, int]:
 
     def _get(key: str, fallback: int) -> int:
         try:
-            return int(
-                os.getenv(f"{provider_key}_QUOTA_{key}", str(fallback)) or fallback
-            )
+            return int(os.getenv(f"{provider_key}_QUOTA_{key}", str(fallback)) or fallback)
         except (ValueError, TypeError):
             return fallback
 
@@ -91,7 +89,7 @@ def record_rate_limit_event(
 
 
 def recent_rate_limit_events(
-    provider: Optional[str] = None,
+    provider: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
     with _rate_lock:
@@ -111,7 +109,7 @@ _WINDOW_RPM = timedelta(minutes=1)
 _WINDOW_RPD = timedelta(days=1)
 
 
-def _parse_iso(ts: str) -> Optional[datetime]:
+def _parse_iso(ts: str) -> datetime | None:
     if not ts:
         return None
     try:
@@ -123,7 +121,7 @@ def _parse_iso(ts: str) -> Optional[datetime]:
 def compute_provider_usage(
     provider: str,
     log_path: Path,
-    now: Optional[datetime] = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Return usage stats for one provider over the last minute and last 24h."""
     provider = (provider or "").lower()
@@ -144,7 +142,7 @@ def compute_provider_usage(
 
     cutoff_minute = now - _WINDOW_RPM
     cutoff_day = now - _WINDOW_RPD
-    last_ts: Optional[datetime] = None
+    last_ts: datetime | None = None
 
     try:
         with log_path.open("r", encoding="utf-8") as fh:
@@ -185,9 +183,7 @@ def compute_provider_usage(
 
                 elif event_type == "provider_failed":
                     err = str(ev.get("error", "")).lower()
-                    if ts >= cutoff_day and (
-                        "429" in err or "resource_exhausted" in err
-                    ):
+                    if ts >= cutoff_day and ("429" in err or "resource_exhausted" in err):
                         result["rate_limit_hits_24h"] += 1
 
     except OSError:
@@ -202,7 +198,7 @@ def compute_provider_usage(
 def build_quota_status(
     provider: str,
     log_path: Path,
-    model: Optional[str] = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """Compose a UI-ready quota snapshot for one provider."""
     provider_lower = (provider or "").lower()
@@ -218,9 +214,7 @@ def build_quota_status(
 
     last_minute_reset = now + _WINDOW_RPM
 
-    tomorrow = (now + timedelta(days=1)).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
     minute_window = {
         "used_requests": usage["requests_last_minute"],
@@ -275,7 +269,7 @@ def build_quota_status(
 
 def build_all_provider_quota_status(
     log_path: Path,
-    providers: Optional[list[str]] = None,
+    providers: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return a dict of provider -> quota status."""
     if providers is None:
@@ -289,7 +283,7 @@ def build_all_provider_quota_status(
 # ---------------------------------------------------------------------------
 
 
-def fetch_gcp_quota() -> Optional[dict[str, Any]]:
+def fetch_gcp_quota() -> dict[str, Any] | None:
     """
     Optional: pull real quota data from Google Cloud Monitoring.
 
@@ -309,8 +303,7 @@ def fetch_gcp_quota() -> Optional[dict[str, Any]]:
         from google.cloud import monitoring_v3
     except ImportError:
         logger.warning(
-            "google-cloud-monitoring not installed. "
-            "Run: pip install google-cloud-monitoring"
+            "google-cloud-monitoring not installed. " "Run: pip install google-cloud-monitoring"
         )
         return None
 

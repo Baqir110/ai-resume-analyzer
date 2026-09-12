@@ -8,7 +8,7 @@ generation, and HTML rendering with strict 100% ATS optimization rules.
 import logging
 import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.services.llm.provider import LLMService
 
@@ -215,8 +215,8 @@ def normalize_resume_language(
     resume_text: str,
     target_language: str,
     provider: str = "experiential",
-    model_name: Optional[str] = None,
-    api_key: Optional[str] = None,
+    model_name: str | None = None,
+    api_key: str | None = None,
     route_mode: str = "experiential",
 ) -> str:
     """
@@ -241,9 +241,7 @@ def normalize_resume_language(
     _le("cache", "cache_miss", cache="translation", target_language=target_language)
 
     target_label = (
-        "professional English"
-        if target_language == "en"
-        else "professional German (Deutsch)"
+        "professional English" if target_language == "en" else "professional German (Deutsch)"
     )
 
     prompt = f"""
@@ -469,7 +467,6 @@ _NON_SKILL_TOKENS = {
     "but",
     "not",
     "is",
-    "are",
     "be",
     "been",
     "being",
@@ -629,11 +626,11 @@ def _is_valid_skill_token(token: str) -> bool:
     return True
 
 
-def _clean_skill_list(skills: Optional[List[str]]) -> List[str]:
+def _clean_skill_list(skills: list[str] | None) -> list[str]:
     if not skills:
         return []
     seen = set()
-    out: List[str] = []
+    out: list[str] = []
     for raw in skills:
         if not raw:
             continue
@@ -660,14 +657,14 @@ def _clean_skill_list(skills: Optional[List[str]]) -> List[str]:
 # ---------------------------------------------------------------------------
 
 
-def _format_skills(missing_skills: Optional[List[str]]) -> str:
+def _format_skills(missing_skills: list[str] | None) -> str:
     cleaned = _clean_skill_list(missing_skills)
     if not cleaned:
         return "None provided."
     return ", ".join(cleaned)
 
 
-def _format_actionable_suggestions(suggestions: Optional[List[str]]) -> str:
+def _format_actionable_suggestions(suggestions: list[str] | None) -> str:
     if not suggestions:
         return "(none — apply only the universal ATS rules below)"
 
@@ -705,11 +702,11 @@ def _call_llm_with_retry(
     prompt: str,
     provider: str,
     context: str,
-    model_name: Optional[str] = None,
-    api_key: Optional[str] = None,
+    model_name: str | None = None,
+    api_key: str | None = None,
     route_mode: str = "experiential",
-) -> Optional[str]:
-    last_error: Optional[Exception] = None
+) -> str | None:
+    last_error: Exception | None = None
     for attempt in range(1, LLM_RETRIES + 2):
         try:
             result = LLMService.generate(
@@ -753,9 +750,7 @@ def _call_llm_with_retry(
 # ---------------------------------------------------------------------------
 
 
-def suggest_best_cv_format(
-    job_description: str, resume_text: str = ""
-) -> Dict[str, Any]:
+def suggest_best_cv_format(job_description: str, resume_text: str = "") -> dict[str, Any]:
     jd_lower = (job_description or "").lower()
     resume_lower = (resume_text or "").lower()
 
@@ -839,10 +834,10 @@ def suggest_best_cv_format(
 
 def _ensure_skill_coverage(
     generated_text: str,
-    missing_skills: List[str],
+    missing_skills: list[str],
     provider: str,
-    model_name: Optional[str] = None,
-    api_key: Optional[str] = None,
+    model_name: str | None = None,
+    api_key: str | None = None,
     route_mode: str = "experiential",
 ) -> str:
     clean = _clean_skill_list(missing_skills)
@@ -858,7 +853,7 @@ def _ensure_skill_coverage(
 
     correction_prompt = f"""
 The following real skills are missing from the CV you just generated:
-{', '.join(absent)}
+{", ".join(absent)}
 
 Weave each of them naturally into either the Technical Skills block or an
 existing experience bullet point.
@@ -1165,7 +1160,7 @@ _STOPWORDS = {
 }
 
 
-def _extract_key_terms(suggestions: List[str]) -> List[str]:
+def _extract_key_terms(suggestions: list[str]) -> list[str]:
     """
     Extract candidate must-have terms from actionable suggestions.
     Filters out plain prose while preserving valid technical terms.
@@ -1204,10 +1199,10 @@ def _extract_key_terms(suggestions: List[str]) -> List[str]:
 
 def _ensure_suggestions_applied(
     generated_text: str,
-    suggestions: List[str],
+    suggestions: list[str],
     provider: str,
-    model_name: Optional[str] = None,
-    api_key: Optional[str] = None,
+    model_name: str | None = None,
+    api_key: str | None = None,
     route_mode: str = "experiential",
 ) -> str:
     terms = _extract_key_terms(suggestions)
@@ -1219,15 +1214,13 @@ def _ensure_suggestions_applied(
     if not absent:
         return generated_text
 
-    logger.warning(
-        "Actionable-suggestion terms missing from CV: %s. Re-prompting.", absent
-    )
+    logger.warning("Actionable-suggestion terms missing from CV: %s. Re-prompting.", absent)
 
     correction_prompt = f"""
 The CV you produced is missing the following terms that were explicitly
 required by the actionable ATS improvements:
 
-{', '.join(absent)}
+{", ".join(absent)}
 
 Weave each term naturally into an existing experience bullet or the
 Technical Skills section. Do NOT create a keyword-dump section.
@@ -1255,7 +1248,7 @@ revised Markdown CV.
 # ---------------------------------------------------------------------------
 
 
-def _fallback_bullet_rewrite(missing_skills: List[str]) -> str:
+def _fallback_bullet_rewrite(missing_skills: list[str]) -> str:
     clean = _clean_skill_list(missing_skills)
     skills_str = ", ".join(clean) if clean else "Python, SQL, Docker, CI/CD"
 
@@ -1273,7 +1266,7 @@ _Note: Generic fallback response — AI optimization service was unreachable._
 """
 
 
-def _fallback_full_cv(resume_text: str, missing_skills: List[str]) -> str:
+def _fallback_full_cv(resume_text: str, missing_skills: list[str]) -> str:
     skills_str = _format_skills(missing_skills)
     return f"""# Candidate CV (Fallback)
 
@@ -1285,13 +1278,10 @@ The AI tailoring engine was temporarily unavailable. Target skills to manually i
 """
 
 
-def _fallback_html_payload(resume_text: str, missing_skills: List[str]) -> str:
+def _fallback_html_payload(resume_text: str, missing_skills: list[str]) -> str:
     skills_str = _format_skills(missing_skills)
     escaped_resume = (
-        (resume_text or "")
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
+        (resume_text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     )
     return f"""<div class="cv-container">
   <p><em>AI styling unavailable — displaying structured fallback text.</em></p>
@@ -1308,12 +1298,12 @@ def _fallback_html_payload(resume_text: str, missing_skills: List[str]) -> str:
 def optimize_resume_bullets(
     resume_text: str,
     job_description: str,
-    missing_skills: List[str],
+    missing_skills: list[str],
     provider: str = "experiential",
-    model_name: Optional[str] = None,
-    api_key: Optional[str] = None,
+    model_name: str | None = None,
+    api_key: str | None = None,
     route_mode: str = "experiential",
-    improvement_suggestions: Optional[List[str]] = None,
+    improvement_suggestions: list[str] | None = None,
     layout_style: str = "international_ats",
 ) -> str:
     if (layout_style or "").strip().lower() in ("auto", "auto_detect", ""):
@@ -1411,12 +1401,12 @@ Now produce the final optimized bullet list.
 def generate_full_tailored_cv(
     resume_text: str,
     job_description: str,
-    missing_skills: List[str],
+    missing_skills: list[str],
     provider: str = "experiential",
-    model_name: Optional[str] = None,
-    api_key: Optional[str] = None,
+    model_name: str | None = None,
+    api_key: str | None = None,
     route_mode: str = "experiential",
-    improvement_suggestions: Optional[List[str]] = None,
+    improvement_suggestions: list[str] | None = None,
     layout_style: str = "international_ats",
 ) -> str:
     if (layout_style or "").strip().lower() in ("auto", "auto_detect", ""):
@@ -1522,13 +1512,13 @@ Now produce the final CV.
 def generate_cv_html_payload(
     resume_text: str,
     job_description: str,
-    missing_skills: List[str],
+    missing_skills: list[str],
     layout_style: str = "german_corporate",
     provider: str = "experiential",
-    model_name: Optional[str] = None,
-    api_key: Optional[str] = None,
+    model_name: str | None = None,
+    api_key: str | None = None,
     route_mode: str = "experiential",
-    improvement_suggestions: Optional[List[str]] = None,
+    improvement_suggestions: list[str] | None = None,
 ) -> str:
     if (layout_style or "").strip().lower() in ("auto", "auto_detect", ""):
         layout_style = auto_select_layout(job_description, resume_text)
@@ -1597,11 +1587,7 @@ ABSOLUTE PROHIBITIONS:
     if raw_html is None:
         return _fallback_html_payload(resume_text, clean_skills)
 
-    cleaned = (
-        re.sub(r"```(?:html)?", "", raw_html, flags=re.IGNORECASE)
-        .replace("```", "")
-        .strip()
-    )
+    cleaned = re.sub(r"```(?:html)?", "", raw_html, flags=re.IGNORECASE).replace("```", "").strip()
 
     if 'class="cv-container"' not in cleaned:
         cleaned = f'<div class="cv-container">\n{cleaned}\n</div>'

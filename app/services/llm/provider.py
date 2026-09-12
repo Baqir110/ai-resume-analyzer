@@ -7,9 +7,9 @@ import re
 import threading
 import time
 from collections import defaultdict
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import anthropic
 import openai
@@ -30,18 +30,13 @@ if not LOG_PATH.is_absolute():
     LOG_PATH = PROJECT_ROOT / LOG_PATH
 
 GATEWAY_BASE_URL = (
-    os.getenv("OPENAI_BASE_URL", "https://api.experientiallabs.ai/v1")
-    .strip()
-    .rstrip("/")
+    os.getenv("OPENAI_BASE_URL", "https://api.experientiallabs.ai/v1").strip().rstrip("/")
 )
 
-CLAUDE_GATEWAY_BASE_URL = (
-    GATEWAY_BASE_URL[:-3] if GATEWAY_BASE_URL.endswith("/v1") else GATEWAY_BASE_URL
-).rstrip("/")
+CLAUDE_GATEWAY_BASE_URL = (GATEWAY_BASE_URL.removesuffix("/v1")).rstrip("/")
 
 EXPERIENTIAL_API_KEY = (
-    os.getenv("EXPLABS_API_KEY", "").strip()
-    or os.getenv("EXPERIENTIAL_ORG_KEY", "").strip()
+    os.getenv("EXPLABS_API_KEY", "").strip() or os.getenv("EXPERIENTIAL_ORG_KEY", "").strip()
 )
 
 DEFAULT_MODELS = {
@@ -330,7 +325,6 @@ def _estimate_cost_usd(model: str, usage: dict[str, int]) -> float:
 
 
 class LLMService:
-
     DEFAULT_MODELS = DEFAULT_MODELS
     SUPPORTED_PROVIDERS = SUPPORTED_PROVIDERS
 
@@ -380,9 +374,7 @@ class LLMService:
             or os.getenv("EXPERIENTIAL_ORG_KEY", "").strip()
         )
         if not key:
-            raise ValueError(
-                "EXPLABS_API_KEY / EXPERIENTIAL_ORG_KEY is not configured."
-            )
+            raise ValueError("EXPLABS_API_KEY / EXPERIENTIAL_ORG_KEY is not configured.")
         return key
 
     # ------------------------------------------------------------------
@@ -410,9 +402,7 @@ class LLMService:
             model = cls.get_default_model(provider)
 
             if provider == "claude":
-                configured = bool(
-                    EXPERIENTIAL_API_KEY or os.getenv("ANTHROPIC_API_KEY")
-                )
+                configured = bool(EXPERIENTIAL_API_KEY or os.getenv("ANTHROPIC_API_KEY"))
                 rows.append(
                     {
                         "provider": provider,
@@ -509,9 +499,7 @@ class LLMService:
             key = cls._get_gateway_key()
             client = openai.OpenAI(api_key=key, base_url=GATEWAY_BASE_URL)
             listing = client.models.list()
-            live_ids = [
-                m.id for m in getattr(listing, "data", []) if getattr(m, "id", None)
-            ]
+            live_ids = [m.id for m in getattr(listing, "data", []) if getattr(m, "id", None)]
         except Exception:
             live_ids = []
 
@@ -565,13 +553,13 @@ class LLMService:
     @classmethod
     def get_usage_summary(
         cls,
-        since_hours: Optional[int] = None,
+        since_hours: int | None = None,
         group_by: str = "provider",
     ) -> dict[str, Any]:
         if group_by not in ("provider", "model"):
             group_by = "provider"
 
-        cutoff_iso: Optional[str] = None
+        cutoff_iso: str | None = None
         if since_hours is not None:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
             cutoff_iso = cutoff.isoformat()
@@ -613,11 +601,9 @@ class LLMService:
                 "estimated_cost_usd": 0.0,
             }
         )
-        per_day: dict[str, dict[str, int]] = defaultdict(
-            lambda: {"tokens": 0, "calls": 0}
-        )
+        per_day: dict[str, dict[str, int]] = defaultdict(lambda: {"tokens": 0, "calls": 0})
 
-        last_completed: Optional[dict[str, Any]] = None
+        last_completed: dict[str, Any] | None = None
 
         try:
             with LOG_PATH.open("r", encoding="utf-8") as fh:
@@ -669,18 +655,14 @@ class LLMService:
                         p["prompt_tokens"] += prompt
                         p["completion_tokens"] += completion
                         p["total_tokens"] += total
-                        p["estimated_cost_usd"] = round(
-                            p["estimated_cost_usd"] + cost, 6
-                        )
+                        p["estimated_cost_usd"] = round(p["estimated_cost_usd"] + cost, 6)
 
                         m = per_model[model]
                         m["calls"] += 1
                         m["prompt_tokens"] += prompt
                         m["completion_tokens"] += completion
                         m["total_tokens"] += total
-                        m["estimated_cost_usd"] = round(
-                            m["estimated_cost_usd"] + cost, 6
-                        )
+                        m["estimated_cost_usd"] = round(m["estimated_cost_usd"] + cost, 6)
 
                         day_key = ts[:10] if ts else "unknown"
                         per_day[day_key]["tokens"] += total
@@ -705,10 +687,7 @@ class LLMService:
         summary["by_provider"] = dict(per_provider)
         summary["by_model"] = dict(per_model)
         summary["by_day"] = sorted(
-            (
-                {"date": d, "tokens": v["tokens"], "calls": v["calls"]}
-                for d, v in per_day.items()
-            ),
+            ({"date": d, "tokens": v["tokens"], "calls": v["calls"]} for d, v in per_day.items()),
             key=lambda r: r["date"],
         )
         summary["last_call"] = last_completed
@@ -735,12 +714,8 @@ class LLMService:
 
                 usage_meta = getattr(response, "usage_metadata", None)
                 if usage_meta is not None:
-                    prompt_tokens = int(
-                        getattr(usage_meta, "prompt_token_count", 0) or 0
-                    )
-                    completion_tokens = int(
-                        getattr(usage_meta, "candidates_token_count", 0) or 0
-                    )
+                    prompt_tokens = int(getattr(usage_meta, "prompt_token_count", 0) or 0)
+                    completion_tokens = int(getattr(usage_meta, "candidates_token_count", 0) or 0)
                     cls._set_last_usage(
                         {
                             "prompt_tokens": prompt_tokens,
@@ -754,9 +729,7 @@ class LLMService:
                 return response.text.strip()
             except Exception as exc:
                 err_str = str(exc)
-                if (
-                    "503" in err_str or "UNAVAILABLE" in err_str
-                ) and attempt < max_retries - 1:
+                if ("503" in err_str or "UNAVAILABLE" in err_str) and attempt < max_retries - 1:
                     logger.warning(
                         "Gemini 503 high demand spike detected on attempt %d/%d. Retrying in %ds...",
                         attempt + 1,
@@ -769,7 +742,7 @@ class LLMService:
 
     @classmethod
     def _execute_direct_openai_style(
-        cls, prompt: str, model: str, api_key: str, base_url: Optional[str] = None
+        cls, prompt: str, model: str, api_key: str, base_url: str | None = None
     ) -> str:
         client = (
             openai.OpenAI(api_key=api_key, base_url=base_url)
@@ -798,7 +771,7 @@ class LLMService:
         prompt: str,
         model: str,
         provider: str,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
     ) -> str:
         key = api_key.strip() if api_key and api_key.strip() else cls._get_gateway_key()
 
@@ -830,15 +803,13 @@ class LLMService:
         cls,
         prompt: str,
         model: str,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
     ) -> str:
         key = api_key.strip() if api_key and api_key.strip() else cls._get_gateway_key()
 
         client = anthropic.Anthropic(
             api_key=key,
-            base_url=(
-                CLAUDE_GATEWAY_BASE_URL if not os.getenv("ANTHROPIC_API_KEY") else None
-            ),
+            base_url=(CLAUDE_GATEWAY_BASE_URL if not os.getenv("ANTHROPIC_API_KEY") else None),
         )
 
         system_instruction = (
@@ -864,9 +835,7 @@ class LLMService:
         result = "".join(parts).strip()
 
         if not result:
-            raise RuntimeError(
-                "Anthropic / Experiential Claude returned an empty response."
-            )
+            raise RuntimeError("Anthropic / Experiential Claude returned an empty response.")
 
         return result
 
@@ -921,8 +890,8 @@ class LLMService:
         cls,
         prompt: str,
         provider: str,
-        model_name: Optional[str] = None,
-        api_key: Optional[str] = None,
+        model_name: str | None = None,
+        api_key: str | None = None,
         force_direct: bool = False,
     ) -> str:
         provider = (provider or "experiential").strip().lower()
@@ -948,13 +917,9 @@ class LLMService:
                     temperature=0.2,
                 )
                 cls._set_last_usage(_extract_anthropic_usage(response))
-                return "".join(
-                    [b.text for b in response.content if b.type == "text"]
-                ).strip()
+                return "".join([b.text for b in response.content if b.type == "text"]).strip()
 
-            return cls._execute_claude_gateway(
-                prompt=prompt, model=model, api_key=api_key
-            )
+            return cls._execute_claude_gateway(prompt=prompt, model=model, api_key=api_key)
 
         direct_key = api_key
         if not direct_key:
@@ -974,9 +939,7 @@ class LLMService:
                 if provider == "gemini":
                     return cls._execute_direct_gemini(prompt, model, direct_key.strip())
                 elif provider == "openai":
-                    return cls._execute_direct_openai_style(
-                        prompt, model, direct_key.strip()
-                    )
+                    return cls._execute_direct_openai_style(prompt, model, direct_key.strip())
                 elif provider == "groq":
                     return cls._execute_direct_openai_style(
                         prompt,
@@ -1030,8 +993,8 @@ class LLMService:
         cls,
         prompt: str,
         provider: str = "experiential",
-        model_name: Optional[str] = None,
-        api_key: Optional[str] = None,
+        model_name: str | None = None,
+        api_key: str | None = None,
         route_mode: str = "experiential",
         **kwargs: Any,
     ) -> str:
@@ -1077,9 +1040,7 @@ class LLMService:
 
                 _next_idx = providers_to_try.index(current_provider) + 1
                 _fallback_to = (
-                    providers_to_try[_next_idx]
-                    if _next_idx < len(providers_to_try)
-                    else None
+                    providers_to_try[_next_idx] if _next_idx < len(providers_to_try) else None
                 )
                 _write_log(
                     {
@@ -1119,9 +1080,7 @@ class LLMService:
 
                 cleaned_text = clean_llm_output(raw_text)
                 if not cleaned_text:
-                    raise RuntimeError(
-                        "Provider returned empty content after cleaning."
-                    )
+                    raise RuntimeError("Provider returned empty content after cleaning.")
 
                 usage = cls._pop_last_usage()
                 cost = _estimate_cost_usd(selected_model, usage)
@@ -1205,9 +1164,7 @@ class LLMService:
                     }
                 )
 
-        raise RuntimeError(
-            f"All LLM execution options failed. Last error: {last_error}"
-        )
+        raise RuntimeError(f"All LLM execution options failed. Last error: {last_error}")
 
     # ------------------------------------------------------------------
     # Log utilities
@@ -1243,7 +1200,7 @@ class LLMService:
 
 
 __all__ = [
-    "LLMService",
     "LOG_PATH",
+    "LLMService",
     "clean_llm_output",
 ]

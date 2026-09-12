@@ -1,0 +1,23 @@
+line-length = 100
+target-version = "py311"
+
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    ".venv",
+    "cleanup_backup_*",
+    "app_backup_*",
+]
+
+[lint]
+select = ["E4", "E7", "E9", "F", "I"]
+ignore = ["E402", "E501"]
+
+[lint.per-file-ignores]
+"tests/*" = ["F401", "F811"]
+
+[format]
+quote-style = "double"
+indent-style = "space"

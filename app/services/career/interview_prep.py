@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, List
+from typing import Any
 
 from app.services.career.interview_questions import get_family
 from app.services.llm.provider import LLMService
@@ -11,10 +11,10 @@ class InterviewPrepService:
         cls,
         resume_text: str,
         job_description: str,
-        missing_skills: List[str],
+        missing_skills: list[str],
         family: str = "technical",
         provider: str = "gemini",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Generates role-specific interview questions and gap defenses.
 
@@ -32,10 +32,10 @@ class InterviewPrepService:
 You are a senior technical interviewer. Analyze the candidate's resume, the
 target job description, and the identified missing skills.
 
-Missing Skills Identified: {', '.join(missing_skills) if missing_skills else 'None'}
+Missing Skills Identified: {", ".join(missing_skills) if missing_skills else "None"}
 
-QUESTION FAMILY: {family_def['label']}
-{family_def['description']}
+QUESTION FAMILY: {family_def["label"]}
+{family_def["description"]}
 
 QUESTION FAMILY INSTRUCTIONS
 ---------------------------
@@ -98,8 +98,7 @@ JOB DESCRIPTION:
                             f"technologies and fast learning speed for {skill}."
                         ),
                         "transferable_angle": (
-                            "Emphasize architectural concepts over specific "
-                            "tool syntax."
+                            "Emphasize architectural concepts over specific " "tool syntax."
                         ),
                     }
                     for skill in missing_skills[:3]

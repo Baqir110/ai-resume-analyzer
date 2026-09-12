@@ -22,12 +22,10 @@ def test_resume_analysis_endpoint(monkeypatch):
     )
 
     jd = (
-        "We are looking for an engineer with Python, FastAPI, Docker, "
-        "and PostgreSQL experience."
+        "We are looking for an engineer with Python, FastAPI, Docker, " "and PostgreSQL experience."
     )
     resume_content = (
-        "Experienced software developer skilled in Python, FastAPI, "
-        "and Docker containerization."
+        "Experienced software developer skilled in Python, FastAPI, " "and Docker containerization."
     )
 
     response = client.post(

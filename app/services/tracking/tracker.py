@@ -1,7 +1,7 @@
 import os
 import sqlite3
-from typing import List, Dict, Any, Optional
 from pathlib import Path
+from typing import Any
 
 DB_PATH = Path(os.getenv("DATABASE_PATH", "data/applications.db"))
 
@@ -37,11 +37,11 @@ class ApplicationTrackerService:
         cls,
         company_name: str,
         job_title: str,
-        job_url: Optional[str] = "",
+        job_url: str | None = "",
         ats_score: int = 0,
         status: str = "Saved",
-        notes: Optional[str] = "",
-    ) -> Dict[str, Any]:
+        notes: str | None = "",
+    ) -> dict[str, Any]:
         cls.init_db()
         with cls._get_connection() as conn:
             cursor = conn.cursor()
@@ -57,7 +57,7 @@ class ApplicationTrackerService:
             return cls.get_application(app_id)
 
     @classmethod
-    def list_applications(cls) -> List[Dict[str, Any]]:
+    def list_applications(cls) -> list[dict[str, Any]]:
         cls.init_db()
         with cls._get_connection() as conn:
             cursor = conn.cursor()
@@ -65,7 +65,7 @@ class ApplicationTrackerService:
             return [dict(row) for row in cursor.fetchall()]
 
     @classmethod
-    def get_application(cls, app_id: int) -> Optional[Dict[str, Any]]:
+    def get_application(cls, app_id: int) -> dict[str, Any] | None:
         cls.init_db()
         with cls._get_connection() as conn:
             cursor = conn.cursor()
@@ -78,9 +78,7 @@ class ApplicationTrackerService:
         cls.init_db()
         with cls._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE applications SET status = ? WHERE id = ?", (status, app_id)
-            )
+            cursor.execute("UPDATE applications SET status = ? WHERE id = ?", (status, app_id))
             conn.commit()
             return cursor.rowcount > 0
 

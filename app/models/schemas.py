@@ -1,4 +1,3 @@
-from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 
@@ -19,16 +18,14 @@ class AnalysisResponse(BaseModel):
     status: str = Field(default="success", json_schema_extra={"example": "success"})
     ats_match_score: float = Field(..., json_schema_extra={"example": 77.55})
     keyword_density_score: float = Field(..., json_schema_extra={"example": 100.0})
-    matching_skills: List[str] = Field(
+    matching_skills: list[str] = Field(
         ...,
         json_schema_extra={
             "example": ["Python", "FastAPI", "Docker", "PostgreSQL", "AWS", "Terraform"]
         },
     )
-    missing_skills: List[str] = Field(
-        ..., json_schema_extra={"example": ["Kubernetes", "Redis"]}
-    )
-    improvement_suggestions: List[str] = Field(
+    missing_skills: list[str] = Field(..., json_schema_extra={"example": ["Kubernetes", "Redis"]})
+    improvement_suggestions: list[str] = Field(
         ...,
         json_schema_extra={
             "example": [
@@ -36,14 +33,12 @@ class AnalysisResponse(BaseModel):
             ]
         },
     )
-    recommendation: Optional[RecommendationDetails] = Field(default=None)
+    recommendation: RecommendationDetails | None = Field(default=None)
 
 
 class ErrorResponse(BaseModel):
     status: str = Field(default="error", json_schema_extra={"example": "error"})
     message: str = Field(
         ...,
-        json_schema_extra={
-            "example": "Could not extract readable text from resume file."
-        },
+        json_schema_extra={"example": "Could not extract readable text from resume file."},
     )

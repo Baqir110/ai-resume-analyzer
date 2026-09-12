@@ -1,10 +1,9 @@
 import json
 import logging
-import os
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -25,9 +24,7 @@ try:
     logger.info("spaCy model 'en_core_web_sm' loaded successfully.")
 except Exception as exc:
     nlp = None
-    logger.warning(
-        f"spaCy model failed to load. Falling back to rule-based parsing: {exc}"
-    )
+    logger.warning(f"spaCy model failed to load. Falling back to rule-based parsing: {exc}")
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -36,9 +33,7 @@ try:
     logger.info("SentenceTransformer model 'all-MiniLM-L6-v2' loaded successfully.")
 except Exception as exc:
     embedder = None
-    logger.warning(
-        f"SentenceTransformer failed to load. Semantic embeddings disabled: {exc}"
-    )
+    logger.warning(f"SentenceTransformer failed to load. Semantic embeddings disabled: {exc}")
 
 from app.core.config import settings
 from app.services.analysis.suggestions import generate_recommendations
@@ -105,7 +100,6 @@ GENERAL_STOP_WORDS = {
     "mitarbeiter",
     "mitarbeitenden",
     "ort",
-    "skills",
     "spezialisierung",
     "stakeholder",
     "standort",
@@ -401,7 +395,7 @@ def is_skill_in_text(skill: str, text_lower: str) -> bool:
 
 
 @lru_cache(maxsize=1)
-def load_skills_taxonomy() -> List[str]:
+def load_skills_taxonomy() -> list[str]:
     """Loads skill taxonomy from file or fallback dictionary."""
     possible_paths = [
         Path(getattr(settings, "SKILL_TAXONOMY_PATH", "data/skills.json")),
@@ -425,9 +419,7 @@ def load_skills_taxonomy() -> List[str]:
             elif isinstance(data, list):
                 skills.extend(data)
 
-            cleaned = {
-                normalize_skill(skill) for skill in skills if isinstance(skill, str)
-            }
+            cleaned = {normalize_skill(skill) for skill in skills if isinstance(skill, str)}
 
             technical = cleaned & DEFAULT_TECHNICAL_SKILLS
             if technical:
@@ -443,7 +435,7 @@ def load_skills_taxonomy() -> List[str]:
     return sorted(DEFAULT_TECHNICAL_SKILLS)
 
 
-def is_valid_tech_term(term: str, taxonomy: Set[str]) -> bool:
+def is_valid_tech_term(term: str, taxonomy: set[str]) -> bool:
     normalized = normalize_skill(term)
     if normalized in GENERAL_STOP_WORDS or normalized in NON_TECHNICAL_TERMS:
         return False
@@ -466,7 +458,7 @@ def is_valid_tech_term(term: str, taxonomy: Set[str]) -> bool:
 # ============================================================
 
 
-def extract_keywords_from_jd(job_description: str) -> Set[str]:
+def extract_keywords_from_jd(job_description: str) -> set[str]:
     """Extracts technical skills using Taxonomy + Pattern Matching + spaCy NER."""
     taxonomy = set(load_skills_taxonomy())
     jd_lower = job_description.lower()
@@ -498,9 +490,7 @@ def extract_keywords_from_jd(job_description: str) -> Set[str]:
                 if clean_chunk in taxonomy:
                     extracted.add(clean_chunk)
                     spacy_count += 1
-            logger.debug(
-                f"spaCy NER identified {spacy_count} potential technical entities."
-            )
+            logger.debug(f"spaCy NER identified {spacy_count} potential technical entities.")
         except Exception as exc:
             logger.debug(f"spaCy extraction skipped due to error: {exc}")
 
@@ -508,7 +498,7 @@ def extract_keywords_from_jd(job_description: str) -> Set[str]:
     return extracted
 
 
-def extract_context_requirements(job_description: str) -> Set[str]:
+def extract_context_requirements(job_description: str) -> set[str]:
     jd_lower = job_description.lower()
     found = set()
     for term in NON_TECHNICAL_TERMS:
@@ -544,9 +534,7 @@ def calculate_context_similarity(resume_text: str, job_description: str) -> floa
 def calculate_semantic_similarity(resume_text: str, job_description: str) -> float:
     """Computes Dense Context Similarity using SBERT Embeddings."""
     if not embedder or not resume_text or not job_description:
-        logger.debug(
-            "SBERT embedder not active or text empty. Skipping semantic similarity."
-        )
+        logger.debug("SBERT embedder not active or text empty. Skipping semantic similarity.")
         return 0.0
     try:
         embeddings = embedder.encode([resume_text, job_description])
@@ -559,7 +547,7 @@ def calculate_semantic_similarity(resume_text: str, job_description: str) -> flo
         return 0.0
 
 
-def check_resume_structure(resume_text: str) -> Dict[str, Any]:
+def check_resume_structure(resume_text: str) -> dict[str, Any]:
     """Rule-based heuristic checks for contact info and standard headers."""
     text_lower = (resume_text or "").lower()
     warnings = []
@@ -597,7 +585,7 @@ def check_resume_structure(resume_text: str) -> Dict[str, Any]:
 def analyze_resume_content(
     resume_text: str,
     job_description: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Unified entrypoint performing keyword analysis, TF-IDF vector matching,
     SBERT embeddings, and structural checks in a single call.
@@ -622,9 +610,7 @@ def analyze_resume_content(
     matching_skills = sorted(matching_skills_set, key=str.lower)
     missing_skills = sorted(missing_skills_set, key=str.lower)
 
-    logger.info(
-        f"Skill Alignment: {len(matching_skills)} matched, {len(missing_skills)} missing."
-    )
+    logger.info(f"Skill Alignment: {len(matching_skills)} matched, {len(missing_skills)} missing.")
 
     # 2. Context Requirements
     context_requirements = extract_context_requirements(job_description)
@@ -637,9 +623,7 @@ def analyze_resume_content(
     # 3. Keyword Density Score
     total_jd_skills = len(matching_skills) + len(missing_skills)
     keyword_density = (
-        round((len(matching_skills) / total_jd_skills) * 100, 2)
-        if total_jd_skills > 0
-        else 0.0
+        round((len(matching_skills) / total_jd_skills) * 100, 2) if total_jd_skills > 0 else 0.0
     )
 
     # 4. Similarities (TF-IDF + SBERT)

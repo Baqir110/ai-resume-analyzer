@@ -5,9 +5,7 @@ import subprocess
 import tempfile
 import unicodedata
 from pathlib import Path
-from typing import Dict, List, Optional
 
-from app.services.llm.provider import LLMService
 from app.services.cv.optimizer import (
     _clean_skill_list,
     _format_actionable_suggestions,
@@ -15,6 +13,7 @@ from app.services.cv.optimizer import (
     normalize_resume_language,
     required_language_for_layout,
 )
+from app.services.llm.provider import LLMService
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +90,7 @@ _BAD_INLINE_LABELS_RE = re.compile(
 def _strip_keyword_dump_sections(body: str) -> str:
     """Remove LLM-generated keyword-dump sections from the LaTeX body."""
     lines = body.splitlines()
-    out: List[str] = []
+    out: list[str] = []
     skip = False
     for line in lines:
         stripped = line.strip()
@@ -257,7 +256,7 @@ def latex_escape_url(url: str) -> str:
 class FactualValidationError(ValueError):
     """Raised when generated CV content cannot be proven faithful to its source."""
 
-    def __init__(self, violations: List[str]):
+    def __init__(self, violations: list[str]):
         self.violations = violations
         super().__init__("; ".join(violations))
 
@@ -285,7 +284,7 @@ def _escape_latex_text(value: str) -> str:
     )
 
 
-def _section_lines(resume_text: str, headings: List[str]) -> List[str]:
+def _section_lines(resume_text: str, headings: list[str]) -> list[str]:
     lines = [line.strip() for line in resume_text.splitlines() if line.strip()]
     start = None
     heading_set = {heading.casefold() for heading in headings}
@@ -335,7 +334,7 @@ _DEGREE_RE = re.compile(
 )
 
 
-def extract_resume_invariants(resume_text: str) -> List[str]:
+def extract_resume_invariants(resume_text: str) -> list[str]:
     experience = _section_lines(
         resume_text,
         [
@@ -350,28 +349,22 @@ def extract_resume_invariants(resume_text: str) -> List[str]:
         resume_text,
         ["Education", "Ausbildung", "Academic Background", "Qualifications"],
     )
-    invariants: List[str] = []
+    invariants: list[str] = []
 
     if experience and not any(_DATE_RE.search(line) for line in experience):
         raise FactualValidationError(
-            [
-                "Could not unambiguously extract career facts from the Experience section."
-            ]
+            ["Could not unambiguously extract career facts from the Experience section."]
         )
 
     for line in experience:
         if not _DATE_RE.search(line):
             continue
-        parts = [
-            part.strip() for part in re.split(r"\s*(?:\||—|–)\s*", line) if part.strip()
-        ]
+        parts = [part.strip() for part in re.split(r"\s*(?:\||—|–)\s*", line) if part.strip()]
         dated_parts = [part for part in parts if _DATE_RE.search(part)]
         factual_parts = [part for part in parts if not _DATE_RE.search(part)]
         if len(factual_parts) < 2 or not dated_parts:
             raise FactualValidationError(
-                [
-                    f"Could not unambiguously extract role, company, and dates from: {line}"
-                ]
+                [f"Could not unambiguously extract role, company, and dates from: {line}"]
             )
         invariants.extend([factual_parts[0], factual_parts[1], dated_parts[0]])
 
@@ -389,7 +382,7 @@ def extract_resume_invariants(resume_text: str) -> List[str]:
     return list(dict.fromkeys(invariants))
 
 
-def extract_candidate_header(resume_text: str) -> Dict[str, str]:
+def extract_candidate_header(resume_text: str) -> dict[str, str]:
     lines = [line.strip() for line in resume_text.splitlines() if line.strip()]
     name = next(
         (
@@ -402,9 +395,7 @@ def extract_candidate_header(resume_text: str) -> Dict[str, str]:
         "",
     )
     if not name:
-        raise FactualValidationError(
-            ["Could not extract a candidate name for the CV header."]
-        )
+        raise FactualValidationError(["Could not extract a candidate name for the CV header."])
 
     email_match = re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", resume_text)
     phone_match = re.search(r"(?:\+?\d[\d ()/-]{6,}\d)", resume_text)
@@ -413,20 +404,16 @@ def extract_candidate_header(resume_text: str) -> Dict[str, str]:
         "name": name,
         "email": email_match.group(0) if email_match else "",
         "phone": phone_match.group(0) if phone_match else "",
-        "linkedin": next(
-            (link for link in links if "linkedin.com" in link.casefold()), ""
-        ),
+        "linkedin": next((link for link in links if "linkedin.com" in link.casefold()), ""),
         "github": next((link for link in links if "github.com" in link.casefold()), ""),
     }
 
 
-def validate_generated_invariants(latex_code: str, invariants: List[str]) -> None:
+def validate_generated_invariants(latex_code: str, invariants: list[str]) -> None:
     from app.core.event_log import log_event
 
     normalized_output = _normalize_fact(latex_code)
-    missing = [
-        fact for fact in invariants if _normalize_fact(fact) not in normalized_output
-    ]
+    missing = [fact for fact in invariants if _normalize_fact(fact) not in normalized_output]
     if missing:
         log_event(
             "pipeline",
@@ -440,7 +427,7 @@ def validate_generated_invariants(latex_code: str, invariants: List[str]) -> Non
         )
 
 
-def _render_candidate_contact(header: Dict[str, str]) -> str:
+def _render_candidate_contact(header: dict[str, str]) -> str:
     parts = []
     if header["email"]:
         email = _escape_latex_text(header["email"])
@@ -448,13 +435,9 @@ def _render_candidate_contact(header: Dict[str, str]) -> str:
     if header["phone"]:
         parts.append(_escape_latex_text(header["phone"]))
     if header["linkedin"]:
-        parts.append(
-            rf"\href{{\detokenize{{{latex_escape_url(header['linkedin'])}}}}}{{LinkedIn}}"
-        )
+        parts.append(rf"\href{{\detokenize{{{latex_escape_url(header['linkedin'])}}}}}{{LinkedIn}}")
     if header["github"]:
-        parts.append(
-            rf"\href{{\detokenize{{{latex_escape_url(header['github'])}}}}}{{GitHub}}"
-        )
+        parts.append(rf"\href{{\detokenize{{{latex_escape_url(header['github'])}}}}}{{GitHub}}")
     return r" \quad$\cdot$\quad ".join(parts)
 
 
@@ -742,7 +725,7 @@ _STOPWORDS = {
 }
 
 
-def _extract_key_terms(suggestions: List[str]) -> List[str]:
+def _extract_key_terms(suggestions: list[str]) -> list[str]:
     """
     Extract candidate must-have terms from actionable suggestions.
 
@@ -790,10 +773,10 @@ def _normalize_for_latex_match(text: str) -> str:
 
 def _ensure_suggestions_applied_latex(
     generated_text: str,
-    suggestions: List[str],
+    suggestions: list[str],
     provider: str,
-    model_name: Optional[str] = None,
-    api_key: Optional[str] = None,
+    model_name: str | None = None,
+    api_key: str | None = None,
     route_mode: str = "experiential",
 ) -> str:
     """
@@ -868,16 +851,8 @@ def clean_llm_response_to_latex(text: str) -> str:
 
     text = text.strip()
 
-    if (
-        text.startswith("I'm ready")
-        or text.startswith("Sure")
-        or "Please provide" in text
-    ):
-        return (
-            r"\section*{Profil}"
-            + "\n"
-            + r"\noindent Resume optimization pending input."
-        )
+    if text.startswith("I'm ready") or text.startswith("Sure") or "Please provide" in text:
+        return r"\section*{Profil}" + "\n" + r"\noindent Resume optimization pending input."
 
     return text
 
@@ -1775,7 +1750,7 @@ CV_TEMPLATES = {
 
 def _fallback_german_latex_body(
     resume_text: str,
-    missing_skills: List[str],
+    missing_skills: list[str],
     layout_style: str = "german_corporate",
     github_url: str = "https://github.com/Baqir110",
 ) -> str:
@@ -1877,17 +1852,17 @@ Engagierter IT-Spezialist mit praktischer Erfahrung in Softwareentwicklung, IT-S
 def generate_german_latex_content(
     resume_text: str,
     job_description: str,
-    missing_skills: List[str],
+    missing_skills: list[str],
     provider: str = "experiential",
-    model_name: Optional[str] = None,
-    api_key: Optional[str] = None,
+    model_name: str | None = None,
+    api_key: str | None = None,
     route_mode: str = "experiential",
     layout_style: str = "german_corporate",
-    primary_color_hex: Optional[str] = None,
-    secondary_color_hex: Optional[str] = None,
+    primary_color_hex: str | None = None,
+    secondary_color_hex: str | None = None,
     linkedin_url: str = "https://www.linkedin.com/in/muhammad-baqir-it/",
     github_url: str = "https://github.com/Baqir110?tab=repositories",
-    improvement_suggestions: Optional[List[str]] = None,
+    improvement_suggestions: list[str] | None = None,
 ) -> str:
     if (layout_style or "").strip().lower() in ("auto", "auto_detect", ""):
         layout_style = auto_select_layout(job_description, resume_text)
@@ -2118,17 +2093,12 @@ ABSOLUTE PROHIBITIONS — VIOLATION WILL BE REJECTED:
             _contact_parts.append(_escape_latex_text(_hdr["phone"]))
         if _hdr.get("email"):
             _contact_parts.append(
-                rf"\hrlink{{mailto:{_hdr['email']}}}"
-                rf"{{{_escape_latex_text(_hdr['email'])}}}"
+                rf"\hrlink{{mailto:{_hdr['email']}}}" rf"{{{_escape_latex_text(_hdr['email'])}}}"
             )
         if _ln:
-            _contact_parts.append(
-                rf"\hrlink{{\detokenize{{{latex_escape_url(_ln)}}}}}{{LinkedIn}}"
-            )
+            _contact_parts.append(rf"\hrlink{{\detokenize{{{latex_escape_url(_ln)}}}}}{{LinkedIn}}")
         if _gh:
-            _contact_parts.append(
-                rf"\hrlink{{\detokenize{{{latex_escape_url(_gh)}}}}}{{GitHub}}"
-            )
+            _contact_parts.append(rf"\hrlink{{\detokenize{{{latex_escape_url(_gh)}}}}}{{GitHub}}")
         template = template.replace(
             "CANDIDATE_CONTACT_PLACEHOLDER",
             r" \quad$\cdot$\quad ".join(_contact_parts),
@@ -2161,6 +2131,7 @@ ABSOLUTE PROHIBITIONS — VIOLATION WILL BE REJECTED:
 
 def compile_latex_to_pdf(latex_code: str) -> bytes:
     import time as _time
+
     from app.core.event_log import log_event
 
     _p_start = _time.perf_counter()
@@ -2170,8 +2141,7 @@ def compile_latex_to_pdf(latex_code: str) -> bytes:
 
     if not pdflatex:
         raise RuntimeError(
-            "pdflatex was not found on PATH. "
-            "TinyTeX/TeX Live directory is not available."
+            "pdflatex was not found on PATH. " "TinyTeX/TeX Live directory is not available."
         )
 
     latex_code = normalize_latex_links(latex_code)
@@ -2225,9 +2195,7 @@ def compile_latex_to_pdf(latex_code: str) -> bytes:
             if second.returncode != 0:
                 output = (second.stdout or "") + "\n" + (second.stderr or "")
                 error_tail = output[-10000:]
-                raise RuntimeError(
-                    f"LaTeX compilation failed on the second pass:\n\n{error_tail}"
-                )
+                raise RuntimeError(f"LaTeX compilation failed on the second pass:\n\n{error_tail}")
 
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError("LaTeX compilation timed out after 30 seconds.") from exc

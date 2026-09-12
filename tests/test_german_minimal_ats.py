@@ -58,9 +58,7 @@ M.Sc. Computer Science | Technical University | 2018 - 2020
 
 
 def test_german_minimal_ats_uses_candidate_header_and_validates_facts(monkeypatch):
-    monkeypatch.setattr(
-        "app.services.cv.latex_generator.LLMService.generate", _generate_body
-    )
+    monkeypatch.setattr("app.services.cv.latex_generator.LLMService.generate", _generate_body)
 
     latex = generate_german_latex_content(
         resume_text=RESUME,
@@ -109,9 +107,7 @@ def test_german_minimal_ats_does_not_fallback_after_llm_failure(monkeypatch):
     "endpoint",
     ["/api/v1/resume/generate-german-cv", "/api/v1/resume/generate-tex-cv"],
 )
-def test_generation_endpoints_return_422_for_factual_validation_failure(
-    monkeypatch, endpoint
-):
+def test_generation_endpoints_return_422_for_factual_validation_failure(monkeypatch, endpoint):
     monkeypatch.setattr(
         "app.api.endpoints.generate_german_latex_content",
         lambda **_kwargs: (_ for _ in ()).throw(
@@ -135,13 +131,9 @@ def test_generation_endpoints_return_422_for_factual_validation_failure(
     }
 
 
-@pytest.mark.skipif(
-    shutil.which("pdflatex") is None, reason="pdflatex is not installed"
-)
+@pytest.mark.skipif(shutil.which("pdflatex") is None, reason="pdflatex is not installed")
 def test_german_minimal_ats_compiles_with_local_pdflatex(monkeypatch):
-    monkeypatch.setattr(
-        "app.services.cv.latex_generator.LLMService.generate", _generate_body
-    )
+    monkeypatch.setattr("app.services.cv.latex_generator.LLMService.generate", _generate_body)
     latex = generate_german_latex_content(
         resume_text=RESUME,
         job_description="Platform engineering role",

@@ -1,5 +1,6 @@
 import json
-from typing import Dict, Any
+from typing import Any
+
 from app.services.llm.provider import LLMService
 
 
@@ -10,7 +11,7 @@ class LinkedInOptimizerService:
         resume_text: str,
         target_role: str = "Software Engineer",
         provider: str = "gemini",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Generates 3 punchy LinkedIn headlines and a 1st-person LinkedIn About section.
         """
@@ -45,8 +46,8 @@ RESUME:
             return {
                 "headlines": [
                     f"{target_role} | Systems Architecture & High-Performance Engineering",
-                    f"Senior Engineer | Python, FastAPI, Cloud Infrastructure",
-                    f"Data & Software Specialist | Building Scalable Services",
+                    "Senior Engineer | Python, FastAPI, Cloud Infrastructure",
+                    "Data & Software Specialist | Building Scalable Services",
                 ],
                 "about_section": raw_response.strip(),
             }

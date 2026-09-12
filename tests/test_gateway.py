@@ -24,6 +24,6 @@ def test_gateway_connection():
 
     assert response, "gateway returned an empty response"
     assert response.strip(), "gateway returned whitespace-only"
-    assert "successful" in response.lower(), (
-        f"gateway responded but did not echo the expected phrase: {response!r}"
-    )
+    assert (
+        "successful" in response.lower()
+    ), f"gateway responded but did not echo the expected phrase: {response!r}"

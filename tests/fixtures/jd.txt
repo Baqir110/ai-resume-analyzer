@@ -1,0 +1,3 @@
+We are hiring a Senior Platform Engineer with strong Python, Kubernetes, and AWS experience.
+You will design scalable distributed systems, own CI/CD, and mentor the team.
+Required: Docker, Terraform, PostgreSQL, observability tools.

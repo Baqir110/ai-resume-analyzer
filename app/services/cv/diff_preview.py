@@ -1,10 +1,10 @@
 import difflib
-from typing import List, Dict, Any
+from typing import Any
 
 
 class DiffPreviewService:
     @staticmethod
-    def generate_word_diff(original_text: str, optimized_text: str) -> Dict[str, Any]:
+    def generate_word_diff(original_text: str, optimized_text: str) -> dict[str, Any]:
         """
         Generates word-level diffs with HTML/Markdown formatting and change statistics.
         """
@@ -58,8 +58,8 @@ class DiffPreviewService:
 
     @classmethod
     def compare_bullet_lists(
-        cls, original_bullets: List[str], optimized_bullets: List[str]
-    ) -> List[Dict[str, Any]]:
+        cls, original_bullets: list[str], optimized_bullets: list[str]
+    ) -> list[dict[str, Any]]:
         """
         Pairs and compares lists of bullet points.
         """
