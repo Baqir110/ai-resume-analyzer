@@ -356,6 +356,7 @@ ai-resume-analyzer/
 │   ├── test_llm.py
 │   └── test_parser.py
 ├── scripts/
+│   ├── ai_doctor.py
 │   ├── ai_fix.py
 │   ├── doctor.py
 │   └── update_readme.py
