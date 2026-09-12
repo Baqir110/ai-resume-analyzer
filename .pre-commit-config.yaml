@@ -8,8 +8,8 @@ repos:
       - id: check-added-large-files
         args: ['--maxkb=1000']
       - id: check-merge-conflict
-      - id: check-ast          # ← syntax errors blocked at commit
-      - id: debug-statements   # catches leftover breakpoint()
+      - id: check-ast
+      - id: debug-statements
       - id: mixed-line-ending
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -25,6 +25,7 @@ repos:
       - id: isort
         args: ["--profile", "black"]
 
+  # Re-enable once the codebase is fully typed
   # - repo: https://github.com/pre-commit/mirrors-mypy
   #   rev: v1.13.0
   #   hooks:
@@ -32,8 +33,18 @@ repos:
   #       additional_dependencies: [types-requests, types-python-dateutil]
   #       args: [--ignore-missing-imports, --no-strict-optional]
   #       files: ^app/
+
   - repo: local
     hooks:
+      # --- Pre-commit stage ---
+      - id: update-readme
+        name: Update README
+        entry: python scripts/update_readme.py
+        language: system
+        pass_filenames: false
+        files: ^(app/|tests/|scripts/update_readme\.py|README\.md)
+
+      # --- Pre-push stage ---
       - id: compile-check
         name: Python compile check
         entry: python -m compileall -q app
@@ -47,11 +58,3 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-push]
-  - repo: local
-    hooks:
-      - id: update-readme
-        name: Update README
-        entry: python scripts/update_readme.py
-        language: system
-        pass_filenames: false
-        files: ^(app/|tests/|scripts/update_readme\.py|README\.md)
