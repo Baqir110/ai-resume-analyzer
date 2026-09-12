@@ -140,3 +140,11 @@ restructur*_project.py
 /list[dict]
 /Optional[datetime]
 /python3
+# Runtime data
+app/data/llm_processing.jsonl
+data/llm_processing.jsonl
+data/*.db
+app/data/*.db
+# Runtime data
+app/data/llm_processing.jsonl
+app/data/*.db

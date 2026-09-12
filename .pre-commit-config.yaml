@@ -47,3 +47,11 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-push]
+  - repo: local
+    hooks:
+      - id: update-readme
+        name: Update README
+        entry: python scripts/update_readme.py
+        language: system
+        pass_filenames: false
+        files: ^(app/|tests/|scripts/update_readme\.py|README\.md)
