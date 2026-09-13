@@ -147,3 +147,6 @@ app/data/*.db
 # Runtime data
 app/data/llm_processing.jsonl
 app/data/*.db
+# Local browser automation profiles / caches
+data/browser_profiles/
+data/browser_profiles/

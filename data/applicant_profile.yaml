@@ -1,0 +1,84 @@
+# data/applicant_profile.yaml
+# Single source of truth for all auto-apply form filling.
+# Never let the LLM invent values that aren't here.
+
+personal:
+  first_name: "Muhammad"
+  last_name: "Baqir"
+  full_name: "Muhammad Baqir"
+  email: "hzindabad44@gmail.com"
+  phone: "+49 152 17975480"
+  city: "Bamberg"
+  state: ""
+  country: "Germany"
+  postal_code: ""
+  address: ""
+  linkedin: "https://www.linkedin.com/in/muhammad-baqir-it/"
+  github: "https://github.com/Baqir110"
+  website: ""
+
+work_authorization:
+  authorized_to_work: true
+  requires_sponsorship: false
+  citizenship: "Pakistan"
+  visa_status: "Student visa (Germany)"
+
+experience:
+  - company: "Parkyeri"
+    title: "DevOps Engineer"
+    location: "Istanbul, Turkey"
+    start_date: "01/2023"
+    end_date: "06/2024"
+    current: false
+    description: >
+      Designed and implemented Python/TensorFlow forecasting solutions on AWS and Azure.
+      Supported AWS cloud migration and infrastructure operations with Nagios, Zabbix, VMware.
+      Redesigned Jira and ServiceNow workflows for a 5-person support team.
+  - company: "Hexagon Helix"
+    title: "DevOps Engineer"
+    location: "Istanbul, Turkey"
+    start_date: "03/2022"
+    end_date: "12/2022"
+    current: false
+    description: >
+      Integrated 20+ systems into Prometheus, Grafana, and Azure Monitor.
+      Created incident-response and root-cause-analysis runbooks.
+      Managed DNS, VPNs, firewalls, TLS certificates, Cisco/Juniper environments.
+
+education:
+  - institution: "Otto-Friedrich-Universität Bamberg"
+    degree: "M.Sc. in International Software Systems Science"
+    location: "Bamberg, Germany"
+    start_date: "10/2024"
+    end_date: ""
+    current: true
+  - institution: "Istanbul Okan University"
+    degree: "B.Sc. in Computer Engineering"
+    location: "Istanbul, Turkey"
+    start_date: ""
+    end_date: "2022"
+    current: false
+
+# Free-text answers for common questions.
+# The LLM will use these verbatim or paraphrase slightly.
+free_text:
+  why_this_company: ""  # Generated per job, filled in at runtime
+  salary_expectation: "Negotiable, based on role and location"
+  availability: "Immediately"
+  notice_period: "2 weeks"
+  willing_to_relocate: "Yes"
+  german_level: "B1"
+  english_level: "IELTS 8.0"
+
+# Demographic fields — only fill if the form asks and you're comfortable.
+# Set to empty string to skip.
+demographics:
+  gender: ""
+  race_ethnicity: ""
+  veteran_status: "I am not a veteran"
+  disability_status: "No, I do not have a disability"
+
+# Files the agent may upload. Relative to project root.
+files:
+  resume_pdf: "data/outputs/resume_latest.pdf"
+  cover_letter_pdf: "data/outputs/cover_letter_latest.pdf"

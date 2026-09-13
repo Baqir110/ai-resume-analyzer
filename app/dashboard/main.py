@@ -61,6 +61,7 @@ with st.sidebar:
         "advanced_tools": "🔧 Advanced Tools",
         "career_suite": "💼 Career Suite",
         "analytics": "📈 Analytics",
+        "auto_apply": "🎯 Auto Apply",
     }
 
     st.selectbox(
@@ -133,6 +134,10 @@ elif selected_page == "analytics":
     from app.dashboard.views.analytics import render_analytics_page
 
     render_analytics_page()
+elif selected_page == "auto_apply":
+    from app.dashboard.views.auto_apply import render
+
+    render()
 
 # ============================================================
 # Bottom — backend log panel

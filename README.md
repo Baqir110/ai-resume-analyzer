@@ -10,8 +10,8 @@
 | Metric | Value |
 |--------|-------|
 | API endpoints | 0 |
-| Python files | 56 |
-| Lines of code | 14,301 |
+| Python files | 65 |
+| Lines of code | 17,430 |
 | Tests | 12 |
 
 <!-- END:AUTO:STATS -->
@@ -267,6 +267,7 @@ ai-resume-analyzer/
 │   ├── api/
 │   │   ├── __init__.py
 │   │   ├── endpoints.py
+│   │   ├── jobs.py
 │   │   ├── new_features_endpoints.py
 │   │   ├── streaming_endpoints.py
 │   │   └── utils.py
@@ -280,6 +281,7 @@ ai-resume-analyzer/
 │   │   │   ├── advanced_tools.py
 │   │   │   ├── analytics.py
 │   │   │   ├── analyzer.py
+│   │   │   ├── auto_apply.py
 │   │   │   ├── career_suite.py
 │   │   │   └── cv_generator.py
 │   │   ├── __init__.py
@@ -287,6 +289,7 @@ ai-resume-analyzer/
 │   │   ├── helpers.py
 │   │   └── main.py
 │   ├── data/
+│   │   ├── llm_processing.jsonl
 │   │   ├── resume_feedback.db
 │   │   ├── resume_versions.db
 │   │   └── skill_progression.db
@@ -322,7 +325,15 @@ ai-resume-analyzer/
 │   │   │   ├── __init__.py
 │   │   │   ├── diff_preview.py
 │   │   │   ├── latex_generator.py
+│   │   │   ├── latex_generator_backup.py
 │   │   │   └── optimizer.py
+│   │   ├── jobs/
+│   │   │   ├── __init__.py
+│   │   │   ├── apply_linkedin.py
+│   │   │   ├── browser_use_applier.py
+│   │   │   ├── discovery.py
+│   │   │   ├── jobs.py
+│   │   │   └── pipeline.py
 │   │   ├── llm/
 │   │   │   ├── __init__.py
 │   │   │   ├── provider.py
@@ -357,6 +368,8 @@ ai-resume-analyzer/
 │   ├── ai_fix.py
 │   ├── doctor.py
 │   ├── run_smoke_tests.py
+│   ├── setup_browser_profile.py
+│   ├── start_edge_debug.bat
 │   └── update_readme.py
 ├── main.py
 ├── run.py

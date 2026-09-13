@@ -5,7 +5,6 @@ import streamlit as st
 from app.dashboard.components import (
     clear_result,
     render_error_alert,
-    render_improvements,
     render_provider_selector,
     render_quota_card,
     render_recommendation_card,
@@ -141,18 +140,20 @@ def render_analyzer_page():
 
     route_mode, provider, model_name = _render_provider_panel(api_base, key_prefix="analyzer")
 
-    ready = bool(uploaded_file and job_desc.strip())
+    job_desc_str = (job_desc or "").strip()
+    ready = bool(uploaded_file and job_desc_str)
+
     if not ready:
         missing = []
         if not uploaded_file:
             missing.append("resume")
-        if not job_desc.strip():
+        if not job_desc_str:
             missing.append("job description")
         st.caption(f"Still needed: {' and '.join(missing)}.")
 
     if st.button(
         "🔍 Analyze ATS match & skill gaps",
-        width="stretch",
+        use_container_width=True,
         type="primary",
         disabled=not ready,
         help=(
@@ -162,7 +163,7 @@ def render_analyzer_page():
     ):
         _run_analysis(
             api_base=api_base,
-            job_desc=job_desc,
+            job_desc=job_desc_str,
             uploaded_file=uploaded_file,
             provider=provider,
             model_name=model_name,
@@ -178,4 +179,6 @@ def render_analyzer_page():
 
         with st.container(border=True):
             st.subheader("Priority improvements")
-            render_improvements(result.get("improvement_suggestions", []))
+            suggestions_list = result.get("improvement_suggestions", [])
+            for item in suggestions_list:
+                st.info(f"💡 {item}")

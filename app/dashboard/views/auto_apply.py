@@ -8,7 +8,7 @@ API_BASE = "http://127.0.0.1:8000/api/v1"
 
 def render() -> None:
     st.title("🎯 Auto Apply")
-    st.caption("AI fills the form in your Edge. You review. You click Submit.")
+    st.caption("AI fills the form. You review. You click Submit.")
 
     with st.form("apply_form"):
         job_url = st.text_input(
@@ -33,7 +33,7 @@ def render() -> None:
         )
 
         max_steps = st.slider("Max agent steps", 10, 60, 40)
-        headless = st.checkbox("Headless (ignored when attached to Edge via CDP)", value=False)
+        headless = st.checkbox("Headless (hide browser)", value=False)
 
         submitted = st.form_submit_button("Fill application")
 
@@ -58,11 +58,11 @@ def render() -> None:
                 data = resp.json()
 
                 if data.get("captcha_encountered"):
-                    st.error("CAPTCHA encountered. Solve it manually in Edge, " "then re-run.")
+                    st.error("CAPTCHA encountered. Solve it manually in the browser, then re-run.")
                 elif data.get("success"):
                     st.success(
                         f"Form filled in {data['steps_taken']} steps. "
-                        "Review the Edge tab and click Submit yourself."
+                        "Review the browser window and click Submit yourself."
                     )
                 else:
                     st.warning(data.get("error_message", "Unknown failure."))
@@ -72,7 +72,7 @@ def render() -> None:
                         st.text(line)
 
             except requests.HTTPError as e:
-                st.error(f"API error {e.response.status_code}: " f"{e.response.text[:500]}")
+                st.error(f"API error {e.response.status_code}: {e.response.text[:500]}")
             except requests.RequestException as e:
                 st.error(f"Request failed: {e}")
 
