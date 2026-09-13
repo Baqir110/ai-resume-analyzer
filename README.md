@@ -10,8 +10,8 @@
 | Metric | Value |
 |--------|-------|
 | API endpoints | 0 |
-| Python files | 65 |
-| Lines of code | 17,430 |
+| Python files | 64 |
+| Lines of code | 15,106 |
 | Tests | 12 |
 
 <!-- END:AUTO:STATS -->
@@ -289,7 +289,6 @@ ai-resume-analyzer/
 │   │   ├── helpers.py
 │   │   └── main.py
 │   ├── data/
-│   │   ├── llm_processing.jsonl
 │   │   ├── resume_feedback.db
 │   │   ├── resume_versions.db
 │   │   └── skill_progression.db
@@ -325,7 +324,6 @@ ai-resume-analyzer/
 │   │   │   ├── __init__.py
 │   │   │   ├── diff_preview.py
 │   │   │   ├── latex_generator.py
-│   │   │   ├── latex_generator_backup.py
 │   │   │   └── optimizer.py
 │   │   ├── jobs/
 │   │   │   ├── __init__.py
@@ -542,7 +540,7 @@ Primary namespace: `/api/v1/resume/`
 
 <!-- BEGIN:AUTO:API -->
 
-_(no API routes detected)_
+_(failed to load app: No module named 'browser_use')_
 
 <!-- END:AUTO:API -->
 
