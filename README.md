@@ -11,8 +11,8 @@
 |--------|-------|
 | API endpoints | 46 |
 | Python files | 105 |
-| Lines of code | 37,634 |
-| Tests | 935 |
+| Lines of code | 37,648 |
+| Tests | 937 |
 
 <!-- END:AUTO:STATS -->
 
@@ -441,6 +441,7 @@ ai-resume-analyzer/
 │   ├── test_compiler_diagnostics.py
 │   ├── test_context_budgeting.py
 │   ├── test_cv_layouts.py
+│   ├── test_dashboard_query_efficiency.py
 │   ├── test_dashboard_workflow.py
 │   ├── test_description_parser.py
 │   ├── test_discovery.py
@@ -1337,7 +1338,7 @@ Retained as-is. Each generates structured content for its domain.
 
 <!-- BEGIN:AUTO:TESTS -->
 
-**Total tests: 935** across 40 files.
+**Total tests: 937** across 41 files.
 
 | Test file | Count |
 |-----------|-------|
@@ -1351,6 +1352,7 @@ Retained as-is. Each generates structured content for its domain.
 | `tests/test_compiler_diagnostics.py` | 19 |
 | `tests/test_context_budgeting.py` | 24 |
 | `tests/test_cv_layouts.py` | 0 |
+| `tests/test_dashboard_query_efficiency.py` | 2 |
 | `tests/test_dashboard_workflow.py` | 25 |
 | `tests/test_description_parser.py` | 12 |
 | `tests/test_discovery.py` | 3 |

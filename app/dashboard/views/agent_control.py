@@ -107,9 +107,21 @@ def render() -> None:
             st.warning(f"Current error: {live['current_error']}")
         st.caption(f"Last updated: {live.get('updated_at', '-')}")
 
-    counts = {
-        state: len(ApplicationStateMachine.list_by_state(state)) for state in ApplicationState
-    }
+    # One query for every state, not one per state.
+    #
+    # ApplicationState has 22 members, so the obvious comprehension opened the
+    # SQLite file 22 times to produce 22 integers. That is slow on a warm
+    # database and, worse, it multiplies the window in which another process
+    # can hold the write lock -- which surfaced as an intermittent
+    # "database is locked" that broke the whole page rather than one metric.
+    # list_by_states already accepts a set, so the counts are a single read and
+    # a tally in Python.
+    all_states = list(ApplicationState)
+    by_state: dict[ApplicationState, list[dict]] = {}
+    for row in ApplicationStateMachine.list_by_states(tuple(all_states)):
+        by_state.setdefault(ApplicationState(row["state"]), []).append(row)
+
+    counts = {state: len(by_state.get(state, ())) for state in all_states}
 
     overview_states = [
         ApplicationState.DISCOVERED,
@@ -126,7 +138,8 @@ def render() -> None:
 
     st.divider()
     st.subheader("✅ Ready to Submit")
-    ready = ApplicationStateMachine.list_by_state(ApplicationState.READY_TO_SUBMIT)
+    # Already fetched above; do not re-query.
+    ready = by_state.get(ApplicationState.READY_TO_SUBMIT, [])
     if not ready:
         st.info("Nothing waiting on you right now.")
     for app in ready:
@@ -163,7 +176,8 @@ def render() -> None:
         (ApplicationState.SUBMISSION_FAILED, "Submission failed"),
         (ApplicationState.VERIFICATION_FAILED, "Could not verify submission"),
     ]:
-        records = ApplicationStateMachine.list_by_state(state)
+        # Reuses the single fetch above rather than querying again.
+        records = by_state.get(state, [])
         if records:
             st.markdown(f"**{label}** ({len(records)})")
             for app in records:
