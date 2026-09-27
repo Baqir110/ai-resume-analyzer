@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<!-- tests/fixtures/mock_greenhouse_form.html
+     A realistic stand-in for a Greenhouse application form, used so
+     backend_submitter.py's field-detection/mapping logic can be tested
+     without ever hitting a live boards.greenhouse.io page (Section 35:
+     "Create mock application websites for browser testing. Do not
+     depend exclusively on real websites for testing."). Field names
+     mirror Greenhouse's actual job_application[...] convention. -->
+<html>
+<body>
+  <form id="application-form" action="/apply" method="post" enctype="multipart/form-data">
+    <input type="text" name="job_application[first_name]" required>
+    <input type="text" name="job_application[last_name]" required>
+    <input type="email" name="job_application[email]" required>
+    <input type="tel" name="job_application[phone]" required>
+    <input type="file" name="job_application[resume]" required>
+
+    <!-- Optional, should not block backend submission if left blank -->
+    <input type="text" name="job_application[linkedin_profile]">
+
+    <!-- Custom per-board question, unmappable without an LLM/profile answer -->
+    <select name="job_application[answers_attributes][0][text_value]" required>
+      <option value="">Please select</option>
+      <option value="yes">Yes</option>
+      <option value="no">No</option>
+    </select>
+
+    <textarea name="job_application[answers_attributes][1][text_value]" required></textarea>
+
+    <button type="submit">Submit Application</button>
+  </form>
+</body>
+</html>

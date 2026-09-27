@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextvars
 import json
 import logging
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -68,9 +69,33 @@ def current_request_id() -> str | None:
     return _current_request_id.get()
 
 
+def _scrub_log_value(key: str, value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): _scrub_log_value(str(k), v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_scrub_log_value(key, item) for item in value]
+    if not isinstance(value, str):
+        return value
+    key_lower = key.casefold()
+    if any(
+        marker in key_lower
+        for marker in ("password", "secret", "token", "api_key", "cookie", "authorization")
+    ):
+        return "[REDACTED]"
+    value = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[EMAIL]", value)
+    value = re.sub(r"(?<!\w)\+?\d[\d .()/-]{7,}\d(?!\w)", "[PHONE]", value)
+    value = re.sub(
+        r"(?i)(https?://)[^\s/@:]+:[^\s/@]+@",
+        r"\1[REDACTED]@",
+        value,
+    )
+    return value
+
+
 def _write_record(path: Path, record: dict) -> None:
-    """Write a single JSON line to the log with file locking."""
-    line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
+    """Write a single redacted JSON line to the log with file locking."""
+    safe_record = {str(key): _scrub_log_value(str(key), value) for key, value in record.items()}
+    line = json.dumps(safe_record, ensure_ascii=False, default=str) + "\n"
 
     with _write_lock, path.open("a", encoding="utf-8") as fh:
         if _HAS_FCNTL:

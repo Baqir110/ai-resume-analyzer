@@ -28,7 +28,7 @@ jobs:
 
       - name: Auto-fix
         run: |
-          ruff check app --fix || true
+          ruff check app tests --fix
           ruff format app
           isort app
 

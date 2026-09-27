@@ -59,8 +59,8 @@ class AuthenticityChecker:
     async def check_authenticity(
         self,
         resume_text: str,
-        provider: str = "experiential",
-        route_mode: str = "experiential",
+        provider: str | None = None,
+        route_mode: str | None = None,
     ) -> dict[str, Any]:
         text = (resume_text or "").strip()
         if not text:
@@ -123,7 +123,9 @@ class AuthenticityChecker:
     # LLM layer
     # ------------------------------------------------------------------
 
-    async def _run_llm_analysis(self, text: str, provider: str, route_mode: str) -> dict[str, Any]:
+    async def _run_llm_analysis(
+        self, text: str, provider: str | None = None, route_mode: str | None = None
+    ) -> dict[str, Any]:
         prompt = (
             "You are a resume authenticity analyst. Read the resume below and "
             "produce a JSON assessment.\n\n"

@@ -68,7 +68,7 @@ def test_german_minimal_ats_uses_candidate_header_and_validates_facts(monkeypatc
     )
 
     assert "Jane Doe" in latex
-    assert "Muhammad Baqir" not in latex
+    assert "Example Candidate" not in latex
     assert "Senior Platform Engineer" in latex
     assert "Example GmbH" in latex
 

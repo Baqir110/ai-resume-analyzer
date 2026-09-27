@@ -7,22 +7,23 @@ Supports English and German business-letter conventions with 100% human-like phr
 from __future__ import annotations
 
 import json
-import logging
-import os
 import re
-import shutil
-import subprocess
-import tempfile
 from datetime import datetime
-from pathlib import Path
 
 from app.services.cv.latex_generator import (
     _escape_latex_text,
     extract_candidate_header,
     latex_escape_url,
 )
+from app.services.cv.pdf_compiler import (
+    LaTeXSourceError,
+    compile_single_page_pdf,
+    validate_latex_document,
+)
 
-logger = logging.getLogger(__name__)
+MAX_COVER_RESUME_CHARS = 200_000
+MAX_COVER_JOB_DESCRIPTION_CHARS = 200_000
+MAX_COVER_MODEL_RESPONSE_CHARS = 100_000
 
 
 # ============================================================
@@ -189,6 +190,7 @@ COVER_LETTER_LATEX_TEMPLATE = r"""
 \usepackage[top=1.8cm,bottom=1.8cm,left=2.0cm,right=2.0cm]{geometry}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
+\usepackage{textcomp}
 \usepackage{lmodern}
 \renewcommand{\familydefault}{\sfdefault}
 \usepackage{xcolor}
@@ -352,12 +354,27 @@ def _build_salutation(lang: str, hiring_manager: str) -> str:
 
 
 def _build_subject_line(lang: str, role: str, company: str) -> str:
-    # Clean math delimiters from role string
     role = role.replace("$", "").strip()
     prefix = _CONVENTIONS[lang]["subject_prefix"]
+    if not company:
+        return f"{prefix} {role}"
     if lang == "de":
         return f"{prefix} {role} bei {company}"
     return f"{prefix} {role} position at {company}"
+
+
+def _extract_role_from_job_description(job_description: str) -> str:
+    """Extract an explicitly labelled role without inventing a default title."""
+    text = (job_description or "")[:20_000]
+    patterns = (
+        r"(?:job title|position|role)\s*[:\-]\s*([^\n]{2,200})",
+        r"(?:stellenbezeichnung|position|rolle)\s*[:\-]\s*([^\n]{2,200})",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip(" .;:")
+    return ""
 
 
 def _build_recipient_block(company: str, department: str = "") -> str:
@@ -372,7 +389,7 @@ def _build_recipient_block(company: str, department: str = "") -> str:
 # LLM Prompts
 # ============================================================
 
-_COVER_LETTER_PROMPT_EN = """You are a real software professional writing a direct, natural cover letter to a team lead.
+_COVER_LETTER_PROMPT_EN = """You are an experienced professional writing a direct, natural cover letter to a hiring team.
 
 RESUME:
 {resume_text}
@@ -385,6 +402,9 @@ PROVIDED COMPANY NAME:
 
 TEMPLATE STYLE:
 {template_style}
+
+TONE:
+{tone}
 
 Write the cover letter in ENGLISH.
 
@@ -410,7 +430,7 @@ HUMAN DETECTOR-BYPASS RULES (STRICT 100% HUMAN SCORE):
 6. Total word count: 250–320 words max.
 """
 
-_COVER_LETTER_PROMPT_DE = """Du bist ein erfahrener DevOps Engineer und schreibst ein direktes, natürliches Anschreiben an einen Teamleiter.
+_COVER_LETTER_PROMPT_DE = """Du bist eine erfahrene Fachkraft und schreibst ein direktes, natürliches Anschreiben an ein Recruiting-Team.
 
 LEBENSLAUF:
 {resume_text}
@@ -423,6 +443,9 @@ ANGEGEBENER UNTERNEHMENSNAME:
 
 STIL:
 {template_style}
+
+TON:
+{tone}
 
 Schreibe das Anschreiben auf DEUTSCH.
 
@@ -455,38 +478,23 @@ REGELN FÜR 100% MENSCHLICHEN TEXT (AI-DETEKTOR PASS):
 
 
 def _escape_cover_letter_text(value: object) -> str:
-    """Safely sanitize text for LaTeX compilation and clean stray spaces/math symbols."""
+    """Bound and escape plain text for insertion into the trusted template."""
     text = "" if value is None else str(value)
-
-    # Clean stray math mode delimiters
+    text = text[:10_000]
+    text = "".join(
+        char for char in text if char in "\t\n\r" or not re.match(r"[\x00-\x1f\x7f]", char)
+    )
     text = text.replace("$", "")
 
-    # Fix broken character-spacing artifacts
     text = re.sub(
         r"\b([a-zA-ZäöüßÄÖÜ])\s+([a-zA-ZäöüßÄÖÜ]{1,2})\s+([a-zA-ZäöüßÄÖÜ]{1,2})\b",
         r"\1 \2 \3",
         text,
     )
     text = re.sub(r"[ \t]+", " ", text)
-
-    replacements = {
-        "\\": r"\textbackslash{}",
-        "&": r"\&",
-        "%": r"\%",
-        "#": r"\#",
-        "_": r"\_",
-        "{": r"\{",
-        "}": r"\}",
-        "~": r"\textasciitilde{}",
-        "^": r"\textasciicircum{}",
-        "®": r"\textregistered{}",
-        "™": r"\texttrademark{}",
-        "“": '"',
-        "”": '"',
-        "„": '"',
-    }
-
-    return "".join(replacements.get(char, char) for char in text)
+    text = text.replace("“", '"').replace("”", '"').replace("„", '"')
+    escaped = _escape_latex_text(text)
+    return escaped.replace("®", r"\textregistered{}").replace("™", r"\texttrademark{}")
 
 
 def _normalize_llm_field(value: object, max_chars: int = 2500) -> str:
@@ -500,6 +508,10 @@ def _normalize_llm_field(value: object, max_chars: int = 2500) -> str:
     return value[:max_chars].strip()
 
 
+def _normalize_llm_line(value: object, max_chars: int) -> str:
+    return " ".join(_normalize_llm_field(value, max_chars).split())
+
+
 def _humanize_generated_text(text: str) -> str:
     text = (text or "").strip()
     text = re.sub(r"```(?:text|latex|markdown)?", "", text, flags=re.IGNORECASE)
@@ -510,24 +522,45 @@ def _humanize_generated_text(text: str) -> str:
 
 
 def _clean_json_response(raw: str) -> str:
-    text = (raw or "").strip()
-    if text.startswith("```"):
+    if not isinstance(raw, str):
+        raise RuntimeError("Cover letter model response must be text.")
+    if len(raw) > MAX_COVER_MODEL_RESPONSE_CHARS:
+        raise RuntimeError("Cover letter model response exceeded the size limit.")
+    text = raw.strip()
+
+    # Remove bounded reasoning blocks from local models.
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+
+    # Extract content inside markdown code blocks if present
+    if "```" in text:
         parts = text.split("```")
+        for part in parts:
+            part_cleaned = part.strip()
+            if part_cleaned.startswith("json"):
+                part_cleaned = part_cleaned[4:].strip()
+            if part_cleaned.startswith("{") and part_cleaned.endswith("}"):
+                return part_cleaned
         if len(parts) >= 2:
             text = parts[1]
             if text.startswith("json"):
                 text = text[4:]
             text = text.strip()
-    return text
+
+    start_idx = text.find("{")
+    end_idx = text.rfind("}")
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        text = text[start_idx : end_idx + 1]
+
+    return text.strip()
 
 
-def _build_contact_line(header: dict) -> str:
+def _build_contact_line(header: dict[str, str]) -> str:
     parts = []
 
     if header.get("email"):
-        email_raw = str(header["email"]).strip()
-        email = _escape_latex_text(email_raw)
-        parts.append(rf"\href{{mailto:{email_raw}}}{{{email}}}")
+        email_url = latex_escape_url(f"mailto:{header['email']}")
+        email_text = _escape_latex_text(header["email"])
+        parts.append(rf"\href{{\detokenize{{{email_url}}}}}{{{email_text}}}")
 
     if header.get("phone"):
         parts.append(_escape_latex_text(header["phone"]))
@@ -552,7 +585,7 @@ def _guess_city(resume_text: str) -> str:
         )
         if match:
             return match.group(1)
-    return "Bamberg"
+    return ""
 
 
 # ============================================================
@@ -565,28 +598,36 @@ def generate_cover_letter_latex(
     job_description: str,
     company_name: str = "",
     template_style: str = "classic_professional",
-    provider: str = "experiential",
+    tone: str = "formal",
+    provider: str | None = None,
     model_name: str | None = None,
-    route_mode: str = "experiential",
+    route_mode: str | None = None,
     language: str = "auto",
 ) -> tuple[str, str]:
     from app.services.llm.provider import LLMService
 
+    if not isinstance(resume_text, str) or not resume_text.strip():
+        raise ValueError("Candidate resume text is empty.")
+    if len(resume_text) > MAX_COVER_RESUME_CHARS:
+        raise ValueError("Candidate resume text exceeds the size limit.")
+    if not isinstance(job_description, str):
+        raise ValueError("Job description must be a string.")
+    if len(job_description) > MAX_COVER_JOB_DESCRIPTION_CHARS:
+        raise ValueError("Job description exceeds the size limit.")
+    if not isinstance(company_name, str):
+        raise ValueError("Company name must be a string.")
+    company_name = _normalize_llm_line(company_name, 160)
+    template_style = str(template_style or "professional")[:100]
+    allowed_tones = {"formal", "concise", "warm", "technical"}
+    tone = str(tone or "formal").strip().lower()
+    if tone not in allowed_tones:
+        raise ValueError("Unsupported cover-letter tone")
+
     if language == "auto":
         language = detect_language(job_description, default="en")
-
     language = "de" if language == "de" else "en"
 
-    try:
-        header = extract_candidate_header(resume_text)
-    except Exception:
-        header = {
-            "name": "Candidate",
-            "email": "",
-            "phone": "",
-            "linkedin": "",
-            "github": "",
-        }
+    header = extract_candidate_header(resume_text)
 
     prompt_template = _COVER_LETTER_PROMPT_DE if language == "de" else _COVER_LETTER_PROMPT_EN
 
@@ -595,6 +636,7 @@ def generate_cover_letter_latex(
         job_description=(job_description or "")[:4000],
         company_name=company_name or "(Extract automatically from job description)",
         template_style=template_style,
+        tone=tone,
     )
 
     raw = LLMService.generate(
@@ -606,17 +648,27 @@ def generate_cover_letter_latex(
 
     try:
         data = json.loads(_clean_json_response(raw))
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Cover letter JSON parse failed: {exc}") from exc
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise RuntimeError("Cover letter model response was not valid JSON.") from exc
 
     if not isinstance(data, dict):
         raise RuntimeError("Cover letter response must be a JSON object.")
 
-    # Multi-tier company extraction
-    regex_company = _extract_company_from_jd(job_description)
-    llm_company = _normalize_llm_field(data.get("company_name"), 160)
+    body_text = " ".join(str(value) for value in data.values())
+    source_text = f"{resume_text}\n{job_description}"
+    numeric_claims = re.findall(
+        r"\b\d+(?:[.,]\d+)?\s*(?:%|percent|years?|months?)\b", body_text, flags=re.IGNORECASE
+    )
+    unsupported_claims = [
+        claim for claim in numeric_claims if claim.casefold() not in source_text.casefold()
+    ]
+    if unsupported_claims:
+        raise RuntimeError("Cover letter contains unsupported numeric claims.")
 
-    if llm_company.lower() in {
+    regex_company = _normalize_llm_line(_extract_company_from_jd(job_description), 160)
+    llm_company = _normalize_llm_line(data.get("company_name"), 160)
+
+    generic_company_names = {
         "the company",
         "company",
         "employer",
@@ -624,27 +676,28 @@ def generate_cover_letter_latex(
         "das unternehmen",
         "unternehmen",
         "arbeitgeber",
-    }:
+    }
+    if llm_company.casefold() in generic_company_names:
         llm_company = ""
+    if company_name.strip().casefold() in generic_company_names:
+        company_name = ""
 
-    final_company_name = (
-        company_name.strip()
-        or (regex_company if "atis" in regex_company.lower() or not llm_company else llm_company)
-        or regex_company
-        or ("ATIS SYSTEMS GmbH" if "atis" in (job_description or "").lower() else "Das Unternehmen")
-    )
+    final_company_name = company_name.strip() or regex_company or llm_company
 
-    hiring_manager = _normalize_llm_field(data.get("hiring_manager_name"), 160)
-    department = _normalize_llm_field(data.get("department"), 160)
-    target_role = _normalize_llm_field(data.get("target_role"), 200)
-
-    # Clean math delimiters from role string
+    hiring_manager = _normalize_llm_line(data.get("hiring_manager_name"), 160)
+    department = _normalize_llm_line(data.get("department"), 160)
+    target_role = _normalize_llm_line(data.get("target_role"), 200)
     target_role = target_role.replace("$", "").strip()
+    target_role = _normalize_llm_line(
+        target_role or _extract_role_from_job_description(job_description),
+        200,
+    )
+    if not target_role:
+        raise RuntimeError("Could not determine the target role from the job description.")
 
     hiring_manager = hiring_manager or (
         "Damen und Herren" if language == "de" else "Hiring Manager"
     )
-    target_role = target_role or ("DevOps Engineer" if language == "de" else "DevOps Engineer")
 
     body_paragraphs = [
         _humanize_generated_text(_normalize_llm_field(data.get("opening"))),
@@ -664,7 +717,7 @@ def generate_cover_letter_latex(
     city_date = _format_date(language, city=city)
     subject_line = _build_subject_line(language, target_role, final_company_name)
     recipient_block = _build_recipient_block(final_company_name, department)
-    sender_name = _escape_latex_text(header.get("name") or "Candidate")
+    sender_name = _escape_latex_text(header["name"])
     sender_contact = _build_contact_line(header)
 
     latex = COVER_LETTER_LATEX_TEMPLATE
@@ -676,56 +729,16 @@ def generate_cover_letter_latex(
     latex = latex.replace("SALUTATION_PLACEHOLDER", _escape_cover_letter_text(salutation))
     latex = latex.replace("SIGNOFF_PLACEHOLDER", _escape_cover_letter_text(signoff))
     latex = latex.replace("BODY_PLACEHOLDER", body_text)
+    if "PLACEHOLDER" in latex:
+        raise RuntimeError("Cover letter contains an unresolved template value.")
+    validate_latex_document(latex)
 
     return latex, language
 
 
 def compile_cover_letter_pdf(latex_code: str) -> bytes:
-    pdflatex = shutil.which("pdflatex")
-    if not pdflatex:
-        raise RuntimeError("pdflatex was not found on PATH. Install MiKTeX or TeX Live.")
-
-    env = os.environ.copy()
-    env["MIKTEX_GUI_MODE"] = "no"
-    env["MIKTEX_AUTOINSTALL"] = "0"
-
-    with tempfile.TemporaryDirectory(prefix="cover_letter_") as tmpdir:
-        tmp_path = Path(tmpdir)
-        tex_path = tmp_path / "cover_letter.tex"
-        pdf_path = tmp_path / "cover_letter.pdf"
-
-        tex_path.write_text(latex_code, encoding="utf-8")
-
-        command = [
-            pdflatex,
-            "-interaction=nonstopmode",
-            "-halt-on-error",
-            "-file-line-error",
-            "-no-shell-escape",
-            f"-output-directory={tmp_path}",
-            str(tex_path),
-        ]
-
-        proc = subprocess.run(
-            command,
-            cwd=str(tmp_path),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            timeout=60,
-        )
-
-        if proc.returncode != 0 or not pdf_path.exists():
-            log_file = tmp_path / "cover_letter.log"
-            log_tail = (
-                log_file.read_text(encoding="utf-8", errors="replace")[-3000:]
-                if log_file.exists()
-                else ""
-            )
-            raise RuntimeError(f"LaTeX compilation failed:\n{log_tail or proc.stdout[-2000:]}")
-
-        return pdf_path.read_bytes()
+    """Compile a validated cover letter through the shared bounded compiler."""
+    if not isinstance(latex_code, str):
+        raise LaTeXSourceError("LaTeX source must be a string.")
+    validate_latex_document(latex_code)
+    return compile_single_page_pdf(latex_code)

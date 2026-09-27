@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -51,14 +52,30 @@ def _replace_section(text: str, section: str, new_content: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _collected_test_count() -> int:
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        match = re.search(r"(\d+)\s+tests? collected", result.stdout)
+        if match:
+            return int(match.group(1))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    return 0
+
+
 def gen_stats() -> str:
     """Project statistics block (deterministic — no timestamps)."""
     try:
         from app.main import app
 
-        route_count = len(
-            [r for r in app.routes if hasattr(r, "path") and r.path.startswith("/api")]
-        )
+        route_count = len(app.openapi().get("paths", {}))
     except Exception:
         route_count = 0
 
@@ -72,15 +89,9 @@ def gen_stats() -> str:
         except Exception:
             pass
 
-    # Count tests
-    test_files = list((ROOT / "tests").rglob("test_*.py"))
-    test_count = 0
-    for f in test_files:
-        try:
-            text = f.read_text(encoding="utf-8")
-            test_count += len(re.findall(r"^\s*def test_", text, re.MULTILINE))
-        except Exception:
-            pass
+    # Count tests from pytest collection so parametrized/async tests are
+    # represented accurately.
+    test_count = _collected_test_count()
 
     return f"""| Metric | Value |
 |--------|-------|
@@ -98,23 +109,16 @@ def gen_api() -> str:
         return f"_(failed to load app: {exc})_"
 
     rows: list[tuple[str, str, str, str]] = []
-    for r in app.routes:
-        # FastAPI 0.116+ wraps include_router in _IncludedRouter
-        if type(r).__name__ == "_IncludedRouter":
-            for sub in getattr(r, "routes", []):
-                if not hasattr(sub, "methods") or not hasattr(sub, "path"):
-                    continue
-                for method in sorted(sub.methods - {"HEAD", "OPTIONS"}):
-                    tag = ", ".join(getattr(sub, "tags", []) or ["—"])
-                    name = getattr(sub, "name", "")
-                    summary = (getattr(sub, "summary", "") or name).strip()
-                    rows.append((method, sub.path, tag, summary))
-        elif hasattr(r, "path") and r.path.startswith("/api"):
-            for method in sorted(getattr(r, "methods", set()) - {"HEAD", "OPTIONS"}):
-                tag = ", ".join(getattr(r, "tags", []) or ["—"])
-                name = getattr(r, "name", "")
-                summary = (getattr(r, "summary", "") or name).strip()
-                rows.append((method, r.path, tag, summary))
+    paths = app.openapi().get("paths", {})
+    for path, operations in paths.items():
+        if not path.startswith("/api"):
+            continue
+        for method, operation in operations.items():
+            if method.upper() in {"HEAD", "OPTIONS"}:
+                continue
+            tags = operation.get("tags") or ["API"]
+            summary = operation.get("summary") or operation.get("operationId") or ""
+            rows.append((method.upper(), path, ", ".join(tags), summary))
 
     if not rows:
         return "_(no API routes detected)_"
@@ -180,13 +184,13 @@ def gen_tests() -> str:
     for f in test_files:
         try:
             text = f.read_text(encoding="utf-8")
-            count = len(re.findall(r"^\s*def test_", text, re.MULTILINE))
+            count = len(re.findall(r"^\s*(?:async\s+)?def test_", text, re.MULTILINE))
             rel = f.relative_to(ROOT).as_posix()
             rows.append(f"| `{rel}` | {count} |")
         except Exception:
             continue
 
-    total = sum(int(r.split("|")[2].strip()) for r in rows)
+    total = _collected_test_count() or sum(int(r.split("|")[2].strip()) for r in rows)
     return (
         f"**Total tests: {total}** across {len(rows)} files.\n\n"
         "| Test file | Count |\n|-----------|-------|\n" + "\n".join(rows) + "\n\n"

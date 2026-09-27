@@ -142,7 +142,7 @@ class ResumeVersionManager:
                 "ats_score": v2["ats_score"],
             },
             "score_improvement": v2["ats_score"] - v1["ats_score"],
-            "word_additions": len(v2["optimized_text"]) - len(v1["optimized_text"]),
+            "word_additions": len(v2["optimized_text"].split()) - len(v1["optimized_text"].split()),
             "sample_diff": self._compute_diff(v1["optimized_text"], v2["optimized_text"]),
         }
 

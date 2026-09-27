@@ -1,6 +1,6 @@
 # AI Resume & CV Optimization Hub
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11–3.12](https://img.shields.io/badge/python-3.11--3.12-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-green.svg)](https://fastapi.tiangolo.com/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.37+-red.svg)](https://streamlit.io/)
 [![Docker](https://img.shields.io/badge/Docker-compose-blue.svg)](https://docs.docker.com/compose/)
@@ -9,10 +9,10 @@
 
 | Metric | Value |
 |--------|-------|
-| API endpoints | 0 |
-| Python files | 64 |
-| Lines of code | 15,106 |
-| Tests | 12 |
+| API endpoints | 46 |
+| Python files | 105 |
+| Lines of code | 37,634 |
+| Tests | 935 |
 
 <!-- END:AUTO:STATS -->
 
@@ -35,6 +35,11 @@ The platform also uses AI to compare resumes with job descriptions, flags missin
 - [API Reference](#api-reference)
 - [Configuration](#configuration)
 - [LLM Providers](#llm-providers)
+  - [Verified status](#verified-status)
+  - [Free / Local LLM Options](#free--local-llm-options)
+  - [Routing](#routing)
+  - [Model discovery](#model-discovery)
+  - [Smoke testing](#smoke-testing)
 - [Observability](#observability)
 - [Document Generation](#document-generation)
 - [Career Workflow](#career-workflow)
@@ -42,6 +47,8 @@ The platform also uses AI to compare resumes with job descriptions, flags missin
 - [Testing](#testing)
 - [Design Decisions](#design-decisions)
 - [Roadmap](#roadmap)
+- [Security](#security)
+- [Known limitations](#known-limitations)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -86,7 +93,7 @@ The optimization workflow follows an additive approach: existing career history,
 - **Factual invariant validation.** The German Minimal ATS layout verifies that company names, dates, and degree titles survive into the generated document before PDF compilation.
 - **Keyword-dump stripping.** Post-processing removes LLM-injected "Additional Keywords" sections that break ATS parsers.
 - **Domain-organized service layer.** `app/services/` split into `parsing/`, `analysis/`, `llm/`, `cv/`, `career/`, `bulk/`, `tracking/`.
-- **Docker compose deployment.** Two-service stack (backend + dashboard) with a shared data volume and healthchecks.
+- **Docker compose deployment.** Backend and dashboard run as non-root services with loopback-only host ports, a named data volume, and an opt-in agent profile.
 - **GitHub Actions CI.** Runs pytest on push against Python 3.11 and 3.12.
 
 ---
@@ -134,7 +141,25 @@ The backend inspects the JD's function-word profile and selects the appropriate 
 ### Pre-flight Language Normalization
 When the target layout requires a different language, the resume text is translated **before** generation. LaTeX is never touched by translation.
 
+### Guided Dashboard
+
+The Streamlit dashboard is organised as the workflow rather than as a list of
+tools: Overview → Resume → Job description → ATS analysis → Optimisation → CV
+generation → PDF preview, with LLM/model settings, layout selection and
+diagnostics alongside. The pages that existed before are still there, unchanged.
+
+Every status the dashboard shows is a verdict something actually established. A
+provider is **CONFIGURED** when a credential and a model were found,
+**AVAILABLE** when its own listing answered, and only **PASSED** after
+something really called it. A document that fails PDF content validation is
+never presented as a success.
+
 ### Ten CV Templates
+
+Every layout is compiled and content-validated in CI from a fixed fixture, and a
+regression test fails if two layouts become structurally identical — the failure
+mode being a refactor that collapses all templates onto one skeleton, which
+would still pass every "does it compile" test.
 `international_ats`, `academic`, `technical_lead`, `hr_executive_gold`, `standard`, `german_corporate`, `german_classic`, `german_modern`, `german_minimal_ats`, plus `auto` detection.
 
 ### Cover-Letter Template Library
@@ -239,21 +264,29 @@ The architecture separates the presentation, API, business logic, AI provider in
 
 | Category            | Technology                                                |
 | ------------------- | --------------------------------------------------------- |
-| Language            | Python 3.10+                                              |
+| Language            | Python 3.11–3.12 (3.13 works, minus the JobSpy source)      |
 | API Framework       | FastAPI                                                   |
 | Frontend            | Streamlit (fragment-scoped)                               |
-| NLP / ML            | scikit-learn (TF-IDF, cosine similarity)                  |
+| NLP / ML            | scikit-learn (TF-IDF, cosine similarity), spaCy           |
 | PDF Parsing         | pypdf                                                     |
 | DOCX Parsing        | python-docx                                               |
 | DOCX Generation     | python-docx                                               |
-| PDF Compilation     | pdflatex                                                  |
-| Configuration       | `.env` environment variables                              |
-| Database            | SQLite                                                    |
-| AI Providers        | Google GenAI, Groq, OpenRouter, DeepSeek, OpenAI, Anthropic, Experiential Labs, Ollama |
-| Testing             | pytest                                                    |
+| PDF Compilation     | pdflatex (MiKTeX, TeX Live or TinyTeX)                    |
+| Configuration       | `.env` environment variables, pydantic-settings           |
+| Database            | SQLite (runtime, untracked)                               |
+| LLM providers       | 13 registered — see [LLM Providers](#llm-providers)       |
+| LLM transports      | native SDK for Anthropic and OpenAI, plain HTTP for the rest |
+| Job discovery       | python-jobspy, direct ATS board APIs                      |
+| Browser automation  | browser-use + Playwright (headless Chromium)              |
+| Testing             | pytest, ruff                                              |
 | API Server          | Uvicorn                                                   |
 | Containerization    | Docker + Docker Compose                                   |
 | CI                  | GitHub Actions                                            |
+
+Only Anthropic and OpenAI are reached through their vendor SDKs. Every other
+provider — including Groq, which has an SDK available — is called over plain
+HTTP against its OpenAI-compatible endpoint. One transport, one retry policy,
+one set of diagnostics, and no per-provider error-shape handling.
 
 ---
 
@@ -274,21 +307,35 @@ ai-resume-analyzer/
 │   ├── core/
 │   │   ├── __init__.py
 │   │   ├── config.py
-│   │   └── event_log.py
+│   │   ├── event_log.py
+│   │   ├── network.py
+│   │   └── security.py
 │   ├── dashboard/
 │   │   ├── views/
 │   │   │   ├── __init__.py
 │   │   │   ├── advanced_tools.py
+│   │   │   ├── agent_control.py
 │   │   │   ├── analytics.py
 │   │   │   ├── analyzer.py
+│   │   │   ├── ats_step.py
 │   │   │   ├── auto_apply.py
 │   │   │   ├── career_suite.py
-│   │   │   └── cv_generator.py
+│   │   │   ├── cv_generator.py
+│   │   │   ├── diagnostics.py
+│   │   │   ├── inputs.py
+│   │   │   ├── layout_picker.py
+│   │   │   ├── llm_settings.py
+│   │   │   ├── optimization.py
+│   │   │   ├── overview.py
+│   │   │   └── pdf_preview.py
 │   │   ├── __init__.py
 │   │   ├── components.py
 │   │   ├── helpers.py
-│   │   └── main.py
+│   │   ├── main.py
+│   │   ├── theme.py
+│   │   └── workflow.py
 │   ├── data/
+│   │   ├── llm_processing.jsonl
 │   │   ├── resume_feedback.db
 │   │   ├── resume_versions.db
 │   │   └── skill_progression.db
@@ -323,25 +370,54 @@ ai-resume-analyzer/
 │   │   ├── cv/
 │   │   │   ├── __init__.py
 │   │   │   ├── diff_preview.py
+│   │   │   ├── latex_escape.py
 │   │   │   ├── latex_generator.py
-│   │   │   └── optimizer.py
+│   │   │   ├── optimizer.py
+│   │   │   ├── pdf_compiler.py
+│   │   │   ├── pdf_validation.py
+│   │   │   └── variant_router.py
 │   │   ├── jobs/
 │   │   │   ├── __init__.py
+│   │   │   ├── agent_schemas.py
+│   │   │   ├── answer_engine.py
 │   │   │   ├── apply_linkedin.py
+│   │   │   ├── arbeitsagentur.py
+│   │   │   ├── auto_runner.py
+│   │   │   ├── backend_submitter.py
 │   │   │   ├── browser_use_applier.py
+│   │   │   ├── company_boards.py
+│   │   │   ├── decision_engine.py
+│   │   │   ├── dedupe.py
+│   │   │   ├── description_parser.py
 │   │   │   ├── discovery.py
-│   │   │   ├── jobs.py
-│   │   │   └── pipeline.py
+│   │   │   ├── email_reader.py
+│   │   │   ├── error_recovery.py
+│   │   │   ├── finder.py
+│   │   │   ├── full_pipeline.py
+│   │   │   ├── jd_fetcher.py
+│   │   │   ├── job_metadata.py
+│   │   │   ├── orchestrator.py
+│   │   │   ├── package_validator.py
+│   │   │   ├── profile_manager.py
+│   │   │   ├── scheduler.py
+│   │   │   └── verification.py
 │   │   ├── llm/
 │   │   │   ├── __init__.py
 │   │   │   ├── provider.py
-│   │   │   └── quota_tracker.py
+│   │   │   ├── quota_tracker.py
+│   │   │   └── registry.py
+│   │   ├── observability/
+│   │   │   ├── __init__.py
+│   │   │   └── structured_logger.py
 │   │   ├── parsing/
 │   │   │   ├── __init__.py
 │   │   │   └── resume_parser.py
 │   │   ├── tracking/
 │   │   │   ├── __init__.py
+│   │   │   ├── analytics.py
 │   │   │   ├── collaborative_feedback.py
+│   │   │   ├── live_status.py
+│   │   │   ├── state_machine.py
 │   │   │   ├── tracker.py
 │   │   │   └── version_manager.py
 │   │   └── __init__.py
@@ -349,28 +425,73 @@ ai-resume-analyzer/
 │   └── main.py
 ├── tests/
 │   ├── fixtures/
+│   │   ├── applicant_profile.yaml
 │   │   ├── jd.txt
+│   │   ├── mock_greenhouse_form.html
 │   │   ├── output.docx
 │   │   └── resume.txt
-│   ├── check_endpoints.py
 │   ├── conftest.py
+│   ├── test_agent_core.py
 │   ├── test_analyzer.py
+│   ├── test_answer_engine.py
 │   ├── test_api.py
+│   ├── test_automation_correctness.py
+│   ├── test_browser_use_security.py
+│   ├── test_compaction_escalation.py
+│   ├── test_compiler_diagnostics.py
+│   ├── test_context_budgeting.py
 │   ├── test_cv_layouts.py
+│   ├── test_dashboard_workflow.py
+│   ├── test_description_parser.py
+│   ├── test_discovery.py
+│   ├── test_documentation_consistency.py
+│   ├── test_e2e_pipeline.py
+│   ├── test_error_recovery.py
 │   ├── test_gateway.py
 │   ├── test_german_minimal_ats.py
-│   ├── test_hf_hub
-│   └── test_parser.py
+│   ├── test_latex_escape.py
+│   ├── test_latex_special_characters_compile.py
+│   ├── test_live_status.py
+│   ├── test_llm_routing.py
+│   ├── test_mock_ats_form.py
+│   ├── test_new_sources.py
+│   ├── test_ollama_qwen3_generation.py
+│   ├── test_orchestrator_retry.py
+│   ├── test_package_validator.py
+│   ├── test_parser.py
+│   ├── test_pdf_compiler.py
+│   ├── test_pdf_content_validation.py
+│   ├── test_pdf_layouts.py
+│   ├── test_provider_registry.py
+│   ├── test_retry_and_call_count.py
+│   ├── test_review_regressions.py
+│   ├── test_second_audit.py
+│   ├── test_security.py
+│   ├── test_structured_llm.py
+│   ├── test_structured_logger.py
+│   ├── test_variant_router.py
+│   └── test_verification.py
 ├── scripts/
 │   ├── ai_doctor.py
 │   ├── ai_fix.py
+│   ├── check_endpoints.py
+│   ├── check_hf_hub.py
 │   ├── doctor.py
+│   ├── llm_smoke.py
+│   ├── model_matrix.py
 │   ├── run_smoke_tests.py
 │   ├── setup_browser_profile.py
+│   ├── start_brave_debug.bat
 │   ├── start_edge_debug.bat
 │   └── update_readme.py
+├── app_watchdog.py
 ├── main.py
 ├── run.py
+├── run_agent_continuous.py
+├── run_job_agent.py
+├── run_job_search.py
+├── run_linkedin_indeed.py
+├── test_linkedin_apply.py
 ```
 
 <!-- END:AUTO:TREE -->
@@ -381,16 +502,21 @@ ai-resume-analyzer/
 
 ### Prerequisites
 
-- Python 3.10 or newer
+- **Python 3.11 or 3.12.** These are the tested and deployed targets: CI runs the
+  suite on both, and the Docker image is built on 3.12. Python 3.13 also works and
+  the suite passes there, but `python-jobspy` has no 3.13-compatible release, so
+  its requirements entry is marked `python_version < "3.13"` and the JobSpy
+  discovery source is unavailable. Every other feature is unaffected.
 - pip
 - Git
-- LaTeX with `pdflatex` (only required for PDF generation)
-- Docker Desktop (only required for the Docker workflow)
+- LaTeX with `pdflatex` — required for PDF generation, which is most of the
+  application
+- Docker Desktop — only for the Docker workflow
 
 **Ubuntu/Debian**:
 ```bash
 sudo apt update
-sudo apt install texlive-latex-base texlive-latex-extra
+sudo apt install -y texlive-latex-base texlive-latex-extra texlive-fonts-recommended lmodern
 ```
 
 **macOS**:
@@ -398,7 +524,15 @@ sudo apt install texlive-latex-base texlive-latex-extra
 brew install --cask mactex-no-gui
 ```
 
-**Windows**: install MiKTeX or TinyTeX and ensure `pdflatex` is on `PATH`.
+**Windows**: install MiKTeX or TinyTeX and ensure `pdflatex` is on `PATH`. Both
+are found automatically — nothing in the application hard-codes a TeX path.
+
+Verify the toolchain before generating anything:
+
+```bash
+pdflatex --version
+python -m scripts.doctor
+```
 
 ### Installation
 
@@ -406,22 +540,31 @@ brew install --cask mactex-no-gui
 git clone https://github.com/Baqir110/ai-resume-analyzer.git
 cd ai-resume-analyzer
 
-python -m venv venv
+python -m venv .venv
 ```
 
 Activate:
 ```bash
 # Windows PowerShell
-.\venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 
 # Linux / macOS
-source venv/bin/activate
+source .venv/bin/activate
 ```
 
-Install:
+Install. `-c constraints.txt` applies the cross-package version guards. The
+Dockerfile and CI use the identical command, so all three resolve the same way:
+
 ```bash
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+pip install -c constraints.txt -r requirements.txt
+```
+
+Contributors can add the linters and the coverage plugin in one step — it
+installs `requirements.txt` first and then adds to it:
+
+```bash
+pip install -c constraints.txt -r requirements-dev.txt
 ```
 
 ### Environment Configuration
@@ -434,41 +577,52 @@ Copy-Item .env.example .env
 cp .env.example .env
 ```
 
-Minimal `.env`:
+`.env.example` is the complete, commented reference: every provider with its
+base URL, credential, model and output ceiling, plus the routing, retry and
+fallback switches. It is generated from the same registry the router dispatches
+on, so it cannot fall out of step with the code.
+
+The smallest useful `.env` — local inference, nothing leaves the machine:
 
 ```env
-# LLM gateway (default route)
-OPENAI_BASE_URL=https://api.experientiallabs.ai/v1
-EXPERIENTIAL_ORG_KEY=your_experiential_org_key
+API_KEY=replace-with-a-long-random-secret
+APPLICANT_PROFILE_PATH=data/applicant_profile.local.yaml
+AUTOMATIC_APPLY=false
+AUTOMATIC_SUBMIT=false
 
-# FastAPI URL (used by the dashboard)
-DEFAULT_API_BASE=http://localhost:8000
+DEFAULT_API_BASE=http://127.0.0.1:8000
+FASTAPI_API_BASE=http://127.0.0.1:8000
 
-# Optional native provider keys
-GEMINI_API_KEY=
-GROQ_API_KEY=
-OPENROUTER_API_KEY=
-DEEPSEEK_API_KEY=
-OPENAI_API_KEY=
-ANTHROPIC_API_KEY=
-
-# Default models per provider
-GEMINI_MODEL=gemini-2.5-flash
-GROQ_MODEL=llama-3.3-70b-versatile
-OPENROUTER_MODEL=deepseek-chat
-DEEPSEEK_MODEL=deepseek-chat
-OPENAI_MODEL=gpt-4o-mini
-CLAUDE_MODEL=claude-3-5-haiku-20241022
-OLLAMA_MODEL=llama3.2
-
-# Paths
-LLM_PROCESSING_LOG=data/llm_processing.jsonl
-
-# Optional Ollama
+# Local, free, no account. "ollama" means a failure is an error rather than a
+# silent send to a cloud provider.
+LLM_MODE=ollama
+LLM_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434/api/generate
+OLLAMA_MODEL=qwen3:8b
+OLLAMA_MAX_TOKENS=2048
+
+LLM_RETRIES=0
+LLM_PROCESSING_LOG=data/llm_processing.jsonl
 ```
 
-**Never commit `.env` or API keys.**
+Check it before generating anything:
+
+```bash
+python -m scripts.doctor          # configuration, sends nothing
+python -m scripts.llm_smoke       # actually calls the configured providers
+```
+
+See [LLM Providers](#llm-providers) for the full set, including OmniRoute and
+the free-tier APIs.
+
+**Never commit `.env`, API keys, portal passwords, browser profiles, or a live applicant profile.** The tracked `data/applicant_profile.yaml` is a blank template. Copy it to `data/applicant_profile.local.yaml`, fill it locally, and keep `APPLICANT_PROFILE_PATH` pointed at that ignored file.
+
+If an older version of this repository was ever pushed with real credentials in
+it, sanitising the current tree is not enough: rotate every exposed credential
+and rewrite the affected Git history and refs with an approved secret-incident
+process before publishing again. See [Security](#security).
+
+Generate a long random `API_KEY` before starting the backend. Job submission, tracker mutations, log operations, and analytics require `X-API-Key`; the service fails closed when the key is missing. Keep the backend and dashboard bound to localhost unless you put authentication and TLS in front of them.
 
 ### Running Locally
 
@@ -482,7 +636,7 @@ Or manually:
 
 ```bash
 # Terminal 1 — backend
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 # Terminal 2 — dashboard
 streamlit run app/dashboard/main.py
@@ -502,14 +656,17 @@ Build the image:
 docker compose build
 ```
 
-Start both services:
+Start both services after creating `.env` with a strong `API_KEY`:
 
 ```bash
 docker compose up
 ```
 
-- Dashboard: http://localhost:8501
-- Backend docs: http://localhost:8000/docs
+- Dashboard: http://127.0.0.1:8501
+- Backend docs: http://127.0.0.1:8000/docs
+- Host ports are bound to loopback; use an authenticated TLS reverse proxy before exposing them.
+- Application data is kept in the `app_data` named volume and is not copied into the image.
+- The autonomous worker is opt-in: `docker compose --profile agent up agent`.
 
 Stop:
 
@@ -540,32 +697,493 @@ Primary namespace: `/api/v1/resume/`
 
 <!-- BEGIN:AUTO:API -->
 
-_(failed to load app: No module named 'browser_use')_
+**Total endpoints: 47**
+
+### Jobs, jobs
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/jobs/answer-question` | Answer Question |
+| `GET` | `/api/v1/jobs/applications` | List Applications |
+| `POST` | `/api/v1/jobs/apply` | Apply To Job |
+| `POST` | `/api/v1/jobs/apply-with-tailored-cv` | Apply With Tailored Cv |
+| `POST` | `/api/v1/jobs/auto-discover-and-apply` | Auto Discover And Apply |
+| `POST` | `/api/v1/jobs/fetch-jd` | Fetch Jd |
+
+### New Features
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/resume/check-authenticity` | Check Authenticity |
+| `POST` | `/api/v1/resume/feedback/comment` | Add Feedback Comment |
+| `POST` | `/api/v1/resume/feedback/thread` | Create Feedback Thread |
+| `GET` | `/api/v1/resume/feedback/{resume_id}` | Get Resume Feedback |
+| `POST` | `/api/v1/resume/interview/evaluate` | Evaluate Interview Answer |
+| `POST` | `/api/v1/resume/interview/question` | Generate Interview Question |
+| `GET` | `/api/v1/resume/market-insights` | Market Insights |
+| `POST` | `/api/v1/resume/score-breakdown` | Score Breakdown |
+| `POST` | `/api/v1/resume/skill-roadmap` | Generate Skill Roadmap |
+| `GET` | `/api/v1/resume/versions/compare` | Compare Versions |
+| `POST` | `/api/v1/resume/versions/save` | Save Resume Version |
+| `GET` | `/api/v1/resume/versions/{user_id}` | List Versions |
+
+### Resume Analyzer
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/resume/analytics/summary` | Analytics Summary |
+| `POST` | `/api/v1/resume/analyze` | Analyze Resume |
+| `POST` | `/api/v1/resume/analyze-bulk` | Analyze Bulk |
+| `POST` | `/api/v1/resume/audit-matrix` | Audit Matrix Endpoint |
+| `GET` | `/api/v1/resume/backend-status` | Backend Status |
+| `GET` | `/api/v1/resume/career-options` | Career Options |
+| `POST` | `/api/v1/resume/diff-preview` | Diff Preview |
+| `POST` | `/api/v1/resume/generate-cover-letter` | Generate Cover Letter Endpoint |
+| `POST` | `/api/v1/resume/generate-cover-letter-pdf` | Generate Cover Letter Pdf Endpoint |
+| `POST` | `/api/v1/resume/generate-full` | Generate Full Cv Endpoint |
+| `POST` | `/api/v1/resume/generate-german-cv` | Generate German Cv Endpoint |
+| `POST` | `/api/v1/resume/generate-tex-cv` | Generate Tex Cv Endpoint |
+| `GET` | `/api/v1/resume/health` | Health Check |
+| `POST` | `/api/v1/resume/interview-prep` | Interview Prep Endpoint |
+| `POST` | `/api/v1/resume/linkedin-optimize` | Linkedin Optimize Endpoint |
+| `GET` | `/api/v1/resume/model-catalog` | Model Catalog |
+| `GET` | `/api/v1/resume/model-discovery` | Model Discovery |
+| `GET` | `/api/v1/resume/pipeline-metrics` | Pipeline Metrics |
+| `DELETE` | `/api/v1/resume/processing-log` | Clear Processing Log |
+| `GET` | `/api/v1/resume/processing-log` | Processing Log |
+| `GET` | `/api/v1/resume/quota-events` | Quota Events |
+| `GET` | `/api/v1/resume/quota-status` | Quota Status |
+| `GET` | `/api/v1/resume/tracker/applications` | List Applications Endpoint |
+| `POST` | `/api/v1/resume/tracker/applications` | Create Application Endpoint |
+| `DELETE` | `/api/v1/resume/tracker/applications/{app_id}` | Delete Application Endpoint |
+| `PATCH` | `/api/v1/resume/tracker/applications/{app_id}` | Update Status Endpoint |
+| `GET` | `/api/v1/resume/usage-summary` | Usage Summary |
+| `POST` | `/api/v1/resume/validate-pdf` | Validate Pdf Endpoint |
+
+### Streaming
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/resume/analyze-stream` | Analyze Resume Streaming |
 
 <!-- END:AUTO:API -->
 
-Full schemas available at `/docs`.
+Full interactive schemas are served at `/docs`, and the raw OpenAPI document at
+`/openapi.json`.
+
+### Health
+
+```bash
+curl http://localhost:8000/health                       # unauthenticated
+curl http://localhost:8000/api/v1/resume/health \
+     -H "X-API-Key: $API_KEY"
+```
+
+Both answer `{"status":"ok"}`. `/health` is deliberately unauthenticated so a
+container healthcheck does not need the key; it reveals nothing beyond liveness.
+This is the endpoint `docker-compose.yml` uses.
+
+### Authentication
+
+Protected routes require the `X-API-Key` header to match `API_KEY` from the
+environment. A missing or wrong key is `401`. It is a shared secret rather than a
+per-user identity, so there is no rate limiting — do not expose the API to the
+internet.
+
+### Request shapes
+
+The resume endpoints take **`multipart/form-data`**, not JSON, because they
+accept an uploaded document:
+
+| Field | Required | Notes |
+| ----- | -------- | ----- |
+| `resume_file` | yes | The uploaded CV. `.pdf`, `.docx` and plain text are parsed. |
+| `job_description` | yes | The posting to analyse against. |
+| `layout_style` | no | Layout id, or `auto` to choose from the posting's language. |
+| `provider`, `model_name`, `route_mode` | no | Per-request override of the `.env` configuration. |
+| `improvement_suggestions` | no | Suggestions from an earlier `/analyze` call, so the CV is tailored to its own audit. |
+
+```bash
+curl -X POST http://localhost:8000/api/v1/resume/analyze \
+     -H "X-API-Key: $API_KEY" \
+     -F "job_description=< posting.txt" \
+     -F "resume_file=@resume.pdf"
+```
+
+`/analyze` answers `{"status", "ats_match_score", "keyword_density_score",
+"matching_skills", "missing_skills", "improvement_suggestions", "recommendation",
+"resume_text"}`.
+
+The three `/generate-*` endpoints answer with **the compiled PDF bytes**
+(`Content-Type: application/pdf`), not a JSON envelope. `/generate-tex-cv`
+returns the LaTeX source instead.
+
+`/diff-preview` is the one JSON request in this group:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/resume/diff-preview \
+     -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
+     -d '{"original_bullets": ["Managed Kubernetes clusters"],
+          "optimized_bullets": ["Orchestrated Kubernetes across 3 environments"]}'
+```
+
 
 ---
 
 ## LLM Providers
 
-The provider abstraction lives in `app/services/llm/provider.py`.
+The provider and the model are chosen in `.env` and nowhere else. No application
+code names either one, so switching between a local model and a cloud provider
+is a configuration change:
 
-| Provider           | Integration      | Fallback position |
-| ------------------ | ---------------- | ----------------- |
-| Experiential Labs  | Gateway          | 0 (default)       |
-| Google GenAI       | Native API       | 1                 |
-| OpenAI             | Native API       | 2                 |
-| DeepSeek           | Native API       | 3                 |
-| Groq               | Native API       | 4                 |
-| OpenRouter         | Native API       | 5                 |
-| Anthropic Claude   | Native / Gateway | 6                 |
-| Ollama             | Local            | 7                 |
+```bash
+LLM_PROVIDER=ollama
+OLLAMA_MODEL=qwen3:8b
+```
 
-If a provider fails, the next in the chain is tried automatically.
+```bash
+LLM_PROVIDER=ollama
+OLLAMA_MODEL=qwen2.5:7b
+```
 
----
+```bash
+LLM_PROVIDER=omniroute
+OMNIROUTE_MODEL=auto
+```
+
+```bash
+LLM_PROVIDER=gemini
+GEMINI_MODEL=<configured-model>
+```
+
+Every provider is described by one record in `app/services/llm/registry.py`:
+its protocol, base URL, credential variables, model variable, output ceiling and
+timeout. Dispatch, configuration checks, model discovery and the dashboard's
+provider list all read that record, so a provider cannot be reachable in one
+place and unknown in another.
+
+### Free / Local LLM Options
+
+**A note that matters more than it looks.** Free tiers, free model ids and
+provider catalogues all change. Nothing below is a promise that a model is free,
+will stay free, or will still exist. Model identifiers are configuration, never
+code, precisely so that a change costs one line in `.env` and a restart. Where
+this section names a model, treat it as an example of the *shape* of the setting.
+
+### Verified status
+
+The table below is a record of what was **actually run** on this repository, not
+a capability list. Three states are kept apart on purpose, because collapsing any
+of them is how a reader comes to believe something works that was never checked.
+
+- **AVAILABLE** — the provider's own model listing answered.
+- **Smoke tested** — the model answered a fixed, harmless prompt
+  (`"Reply with exactly the word: acknowledged"`). No CV, no posting, no
+  credential. Establishes reachability and that usable text comes back.
+- **Full pipeline** — the model completed the real path end to end on a
+  synthetic fixture and the resulting PDF passed content validation.
+
+A model can pass the smoke test and still be unable to produce a complete CV.
+That is why the two are separate columns.
+
+Reproduce with:
+
+```bash
+python -m scripts.model_matrix --all          # both stages, every model
+python -m scripts.model_matrix --smoke        # smoke only
+python -m scripts.model_matrix --pipeline     # full pipeline only
+```
+
+Nothing is ever downloaded: a model that is not installed is reported
+`NOT INSTALLED`.
+
+#### Local models
+
+Every row below was produced by running the harness above against the Ollama
+instance on this machine. Nothing was downloaded to fill in a row.
+
+| Model | Local/API | Installed | Smoke tested | Full CV pipeline | Result |
+|---|---|---|---|---|---|
+| `qwen3:8b` | local | 5.2 GB | PASS (11.7 s) | **PASS** | 5/5 runs, 78.7–90.1 s, 3 LLM calls, 1-page PDF, 86.2–88.7 % content retained |
+| `llama3` | local | 4.7 GB | PASS (4.8 s) | **PASS** | 5/5 runs, 63.3–70.3 s, 3 LLM calls, 1-page PDF, 81.0–90.6 % retained |
+| `gemma4` | local | 9.6 GB | PASS (13.9 s) | **PASS** | 5/5 runs, 62.6–73.0 s, 3 LLM calls, 1-page PDF, 84.7–90.6 % retained |
+| `llama3.2` | local | 2.0 GB | PASS (5.6 s) | **PASS** | **Unreliable: 8/17 runs (47 %).** See below — do not read the PASS as reliable |
+| `qwen2.5:7b` | local | 4.7 GB | PASS (11.4 s) | FAIL | Generation produced no CV; the factual invariant check refused the output |
+| `deepseek-r1:8b` | local | 5.2 GB | PASS (14.6 s) | NOT TESTED | Answers, but not usefully: 774 characters of reasoning prose in reply to a one-word prompt. `think:false` does not suppress it |
+| `glm-4.7-flash` | local | 19.0 GB | PASS (31.2 s) | NOT TESTED | Smoke only. A 19 GB model was not run through the pipeline for a status check |
+| `qwen3.6` | local | 23.9 GB | PASS (40.0 s) | NOT TESTED | Smoke only. A 24 GB model was not run through the pipeline for a status check |
+| `llama3.3:70b` | local | 42.5 GB | FAIL (9.6 s) | NOT TESTED | Ollama returned `500 Server Error` from `/api/generate`. Not exercised further |
+
+**Three models completed the entire pipeline on every run**: fixture resume →
+ATS analysis → bullet optimisation → CV generation → LaTeX → `pdflatex` → PDF →
+PDF parse → content validation. `qwen3:8b` is the configured default and is the
+one the rest of this documentation assumes.
+
+**`llama3.2` passes, but do not rely on it.** Across 17 runs it succeeded 8 times
+and failed 9, in three distinct ways:
+
+| Failure | Observed | Cause |
+|---|---|---|
+| `undefined_macro` | 6 runs, LaTeX of 19 700–22 700 characters where 4 000 was expected | The model stops producing a CV and loops. The extra output is not valid LaTeX, so `pdflatex` reports an undefined control sequence around line 86 |
+| One-page overflow | 2 runs, ~5 400 characters | A legitimate CV that does not fit even after compaction. The compiler refuses it rather than truncating |
+| No CV produced | 1 run | Generation returned nothing usable |
+
+This is a property of the model, not of the pipeline, and the validation layers
+behave correctly on every one of these: the invariant check and the one-page
+requirement both **refuse** the bad output instead of passing it through. The
+previous single-run result recorded here was a lucky sample; the pass rate is
+the honest number.
+
+Per-stage timings, medians over passing runs, so the cost is visible rather than
+implied:
+
+| Stage | `qwen3:8b` | `llama3` | `gemma4` | `llama3.2` |
+|---|---|---|---|---|
+| ATS analysis (no LLM) | 2.32 s | 2.09 s | 2.32 s | 0.03 s |
+| Bullet optimisation (1 LLM call) | 59.98 s | 43.72 s | 48.37 s | 23.93 s |
+| CV generation → LaTeX (1–2 LLM calls) | 26.65 s | 21.68 s | 19.08 s | 16.80 s |
+| `pdflatex` | 1.09 s | 2.47 s | 1.03 s | ~1.0 s |
+| PDF parse + content validation | 0.03 s | 0.03 s | 0.03 s | ~0.05 s |
+| **Total** | **90.06 s** | **69.98 s** | **70.82 s** | **~52.7 s** |
+| LLM calls | 3 | 3 | 3 | 3 |
+
+All four take three calls on the `german_corporate` layout, because that layout
+sets `language=de` and the generator therefore translates the resume before
+writing the CV. An earlier measurement showed two calls for some models; that was
+a run in which the translation path was not taken, not a difference between the
+models. Two calls is the English-only cost, three is the German one.
+
+
+#### API providers
+
+Smoke-tested against the environment this repository was tested in. A failure
+here is a fact about that environment — an invalid key, an empty balance, a
+retired model id — not a statement about the provider.
+
+| Provider | Local/API | Configured | Smoke tested | Full CV pipeline | Result |
+|---|---|---|---|---|---|
+| `groq` | API | yes | **PASS** (0.4 s) | NOT TESTED | Usable text returned |
+| `omniroute` | local | yes | **PASS** (6.0 s) | NOT TESTED | A local gateway was listening on port 20128 and answered. Earlier runs found nothing there, so this row reflects one machine at one moment, not a stable property |
+| `gemini` | API | yes | FAIL (1.8 s) | NOT TESTED | 429 `RESOURCE_EXHAUSTED` — the key's quota is exhausted. An earlier run of the same key passed, so this is a billing state, not a defect |
+| `openai` | API | yes | FAIL (0.5 s) | NOT TESTED | 401 — the configured key is not valid |
+| `claude` | API | yes | FAIL (0.4 s) | NOT TESTED | 400 — the key is not scoped to a workspace |
+| `deepseek` | API | yes | FAIL (0.9 s) | NOT TESTED | 402 — insufficient balance, correctly classified as non-retryable |
+| `openrouter` | API | yes | FAIL (0.3 s) | NOT TESTED | 400 — `nvidia/nemotron-3-ultra:free` is no longer a valid model id |
+| `experiential` | API | yes | FAIL (0.8 s) | NOT TESTED | 403 — the key does not grant the configured model alias |
+| `huggingface` | API | yes | NOT CONFIGURED | NOT TESTED | A credential is set, but no model is chosen, so nothing was sent |
+| `cerebras` | API | no | NOT CONFIGURED | NOT TESTED | No credential set |
+| `cloudflare` | API | no | NOT CONFIGURED | NOT TESTED | No credential set |
+| `github` | API | no | NOT CONFIGURED | NOT TESTED | No credential set |
+
+The OpenRouter row is the clearest argument for the rule this project follows:
+a model id that carried `:free` six months ago is gone, and the only fix was one
+line in `.env`. Nothing in this application treats a model identifier as
+permanent, and nothing in this table claims a free tier still exists.
+
+**Not one API provider completed the full CV pipeline during this test.** The
+local models did. That is a statement about the credentials in this
+environment, not about the providers.
+
+#### LOCAL FREE — no account, no key, nothing leaves your machine
+
+| Provider | What it is | Cost |
+|---|---|---|
+| **Ollama** | Runs open-weight models on your own hardware. `ollama serve`, then `ollama pull <model>`. | Free. Hardware and electricity. |
+
+```bash
+LLM_MODE=ollama
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434/api/generate
+OLLAMA_MODEL=qwen3:8b
+OLLAMA_MAX_TOKENS=2048
+```
+
+`LLM_MODE=ollama` is the setting that matters: it means a failure produces an
+error rather than silently sending your CV to a cloud provider. `LLM_MODE=auto`
+prefers Ollama but *will* fall back to the online chain, which is the right
+default for convenience and the wrong one for confidentiality.
+
+Models that work with no code change, as long as they are installed:
+`qwen3:8b`, `qwen2.5:7b`, `llama3.2`, `llama3`, `deepseek-r1:8b`, and anything
+else `ollama list` reports. `python -m scripts.llm_smoke --list ollama` shows what
+is installed; if the configured model is missing, the health check names the
+exact `ollama pull` command that fixes it.
+
+**Two Ollama endpoints, and the difference is not cosmetic:**
+
+- `.../api/generate` — the native endpoint. Honours `num_ctx` and `think:false`.
+  Recommended.
+- `.../v1` — the OpenAI-compatible shim. Its 2048-token window holds the prompt
+  *and* the completion together, and no request field raises it. The application
+  therefore sizes the output ceiling to whatever the prompt leaves over, and
+  skips the local provider for a request whose prompt leaves too little room —
+  logging which of the two happened and why. Switching is a one-line change.
+
+#### FREE-TIER API — a key, a quota, and terms that can change
+
+| Provider | Notes |
+|---|---|
+| **OmniRoute** | A local OpenAI-compatible gateway. Runs on your machine; the key is optional. |
+| **Gemini** | Google AI Studio key. Free tier available; quotas and model names change. |
+| **Groq** | Fast free tier for open-weight models. Quotas are per account and change. |
+| **OpenRouter** | Aggregator with a `free` routing option. Catalogue changes frequently. |
+| **Cerebras** | Fast inference. Set `CEREBRAS_MODEL`; no default is shipped. |
+| **Cloudflare Workers AI** | Account id is part of the base URL. |
+| **GitHub Models** | Available models depend on repository permissions. |
+| **Hugging Face** | Inference Router. Identifier in `.env` is `huggingface`. |
+
+#### PAID API
+
+`openai`, `claude` (accepted as `anthropic`), `deepseek`, and the Experiential
+Labs gateway.
+
+#### OmniRoute
+
+Treated as a **gateway, not a model** — it is an OpenAI-compatible server that
+routes to whatever backends it has, so it is configured like a provider and
+selected like one:
+
+```bash
+LLM_PROVIDER=omniroute
+LLM_ROUTE_MODE=direct
+OMNIROUTE_BASE_URL=http://localhost:20128/v1
+OMNIROUTE_API_KEY=
+OMNIROUTE_MODEL=auto
+OMNIROUTE_MAX_TOKENS=2048
+```
+
+`OMNIROUTE_MODEL=auto` lets the gateway choose; set an explicit model id to pin
+it. The key is genuinely optional: when it is blank, no `Authorization` header is
+sent at all, rather than a placeholder one that a gateway with no authentication
+could answer with 401. Local base URLs may use plain HTTP and a non-standard
+port; remote ones are still validated (HTTPS required, loopback and private
+addresses rejected).
+
+### Routing
+
+```bash
+LLM_MODE=auto       # local first, then the online chain
+LLM_MODE=ollama     # local only; never leaves the machine
+LLM_MODE=online     # online chain only; never touches a local provider
+```
+
+`LLM_MODE` takes precedence over the older `LLM_PROVIDER` / `LLM_ROUTE_MODE`
+pair, which is still honoured when `LLM_MODE` is unset.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `LLM_FALLBACK_ENABLED` | `true` | `false` means exactly one provider, whatever happens. |
+| `LLM_MAX_PROVIDER_ATTEMPTS` | `4` | Hard cap on providers tried per request. Minimum 1. |
+| `LLM_RETRIES` | `0` | Extra attempts on the **same** provider. `0` means one attempt total. |
+| `LLM_RETRY_BACKOFF_SECONDS` | `1.5` | Linear backoff per attempt. |
+
+**Fallback** only happens when the previous provider genuinely failed with a
+retryable condition — a timeout, a rate limit, a 5xx, an unreachable endpoint.
+It is never triggered by an application-side parsing bug, and it is bounded by
+`LLM_MAX_PROVIDER_ATTEMPTS`, so one request can never become an unbounded number
+of billable ones.
+
+**Retries** are deliberately narrow. Transient failures are retried; a bad key,
+an unknown model, an exhausted balance, a malformed response and an empty answer
+are not, because an identical request produces an identical result. A missing
+*local* model is the interesting case: retrying the same provider cannot fix it,
+so it is not retried, but a *different* provider can, so the router does fail
+over — which is why those two decisions are kept separate.
+
+### Output ceilings
+
+Every provider has its own variable, resolved per request:
+
+```bash
+OLLAMA_MAX_TOKENS=2048          # OLLAMA_MAX_OUTPUT_TOKENS accepted as an alias
+OMNIROUTE_MAX_TOKENS=2048
+GEMINI_MAX_TOKENS=2048
+GROQ_MAX_TOKENS=2048
+OPENROUTER_MAX_TOKENS=2048
+OPENAI_MAX_TOKENS=2048
+CLAUDE_MAX_TOKENS=4096
+DEEPSEEK_MAX_TOKENS=2048
+LLM_MAX_TOKENS=2048             # fallback for any provider without its own
+```
+
+A per-task budget is applied on top: a whole CV body is allowed more room than a
+keyword extraction, because a truncated document is the failure this pipeline
+exists to prevent. A ceiling is never allowed to degenerate to zero, and on
+Ollama's `/v1` shim it is reduced to what the window can actually hold.
+
+### Model discovery
+
+Discovery is optional and never required. A provider that exposes no listing
+still works with a hand-set model id.
+
+```bash
+python -m scripts.llm_smoke --list              # every provider
+python -m scripts.llm_smoke --list ollama       # one provider
+curl http://localhost:8000/api/v1/resume/model-discovery          # all
+curl "http://localhost:8000/api/v1/resume/model-discovery?provider=groq"
+```
+
+Each row reports the provider, the model id, where it came from (`discovery` or
+`configuration`), and any context length the provider actually stated. Nothing is
+inferred: an unstated context length stays absent rather than being guessed from
+a model name, because a guess is how a routing decision starts failing silently.
+The configured model is always listed, flagged if discovery did not return it, so
+a typo in `.env` is visible immediately.
+
+### Smoke testing
+
+```bash
+python -m scripts.llm_smoke              # every configured provider
+python -m scripts.llm_smoke ollama groq  # selected providers
+python -m scripts.llm_smoke --json       # machine-readable
+python -m scripts.doctor                 # configuration check, sends nothing
+```
+
+The smoke test reports, per provider: reachable, model available, a simple prompt
+succeeded, usable text returned, latency, and token usage where the provider
+reports it. A provider that is not configured reports `NOT CONFIGURED` rather than
+failing the run, so a partially configured machine still tells you something
+useful.
+
+It sends a fixed, harmless prompt (`Reply with exactly the word: acknowledged`)
+and **never** sends your CV or a job description. It prints no credential, no
+prompt and no response text — only lengths, counts and a failure category.
+
+```text
+PROVIDER      STATUS           MODEL                         SECS  DETAIL
+ollama        OK               qwen3:8b                       6.5  Usable text returned.
+gemini        OK               gemini-2.5-flash               3.9  Usable text returned.
+cerebras      NOT CONFIGURED   -                                -  No credential. Set CEREBRAS_API_KEY.
+deepseek      FAILED           deepseek-chat                  1.0  [insufficient_credits] Error code: 402 ...
+```
+
+### Troubleshooting
+
+**"Ollama returned empty content"** — the output budget was consumed before any
+answer was written. On a reasoning model the budget can go into its thinking
+channel, leaving `content` empty with `finish_reason=length`. The application
+refuses to return a half-finished chain-of-thought as a CV, which is why it is an
+error rather than a short answer. Fix it by raising the ceiling
+(`OLLAMA_MAX_TOKENS=4096`) or by using the native `/api/generate` endpoint, which
+honours `think:false` and returns the answer directly. The error message reports
+the finish reason, the available message fields, the reasoning length and the
+token counts — never the content.
+
+**A local model is never used in `auto` mode** — check the log for
+`Skipping Ollama`. On the `/v1` shim the window is shared between prompt and
+completion, so a long prompt can leave too little room; the log says which of the
+two reasons applied. The native endpoint does not have this limit.
+
+**`NOT CONFIGURED` for a provider you set up** — the doctor names the variable to
+set. For a local gateway also confirm the port: `python -m scripts.llm_smoke
+--list omniroute` reports whether it is reachable at all.
+
+**A model id stopped working** — provider catalogues change. Run
+`python -m scripts.llm_smoke --list <provider>` for the current list and update
+the one line in `.env`. This is the expected cost of never hard-coding a model.
+
+**`insufficient_credits`** — a 402 is an empty balance, not a rate limit. It is
+not retried, because retrying cannot add credit.
 
 ## Observability
 
@@ -610,21 +1228,89 @@ Usage is computed from the local event log. The dashboard shows percentage bars 
 Generated from Markdown via `python-docx`. Single-column, standard headings, no tables.
 
 ### LaTeX → PDF
-Compiled locally with `pdflatex`. Available layouts:
+Compiled locally with `pdflatex`. Ten layouts, all exercised in CI from a fixed
+fixture:
 
-| Layout | Purpose |
-| ------ | ------- |
-| `international_ats` | Compact single-page English CV |
-| `academic` | Serif, Education-first, Research/Publications sections |
-| `technical_lead` | Modern, Technical Summary + Open Source + Speaking sections |
-| `standard` | Generic English ATS |
-| `hr_executive_gold` | Executive English |
-| `german_corporate` | Corporate German |
-| `german_classic` | Traditional German |
-| `german_modern` | Modern German |
-| `german_minimal_ats` | Strict-invariant German single-column |
+| Layout | Language | Purpose |
+| ------ | -------- | ------- |
+| `international_ats` | en | Compact single-page English CV |
+| `standard` | en | Generic English ATS |
+| `academic` | en | Serif, Education-first, Research/Publications sections |
+| `technical_lead` | en | Modern, Technical Summary + Open Source + Speaking sections |
+| `hr_executive_gold` | en | Executive English, serif with a gold accent |
+| `german_corporate` | de | Corporate German, serif with a single accent colour |
+| `german_classic` | de | Traditional German, ruled section heads |
+| `german_modern` | de | Modern German, coloured header block |
+| `german_ats` | de | Plain and unambiguous, built for keyword extraction |
+| `german_minimal_ats` | de | Strict-invariant German single-column, pure black |
 
-Preamble patches (`lmodern` font, `\sloppy`, `\emergencystretch`) applied at runtime to prevent overflow and font-fallback artifacts.
+`german_minimal_ats` is genuinely monochrome — no colour anywhere — so it
+survives monochrome printing and aggressive parsers. It is not a relabelled copy
+of `international_ats`: `tests/test_pdf_content_validation.py` compiles all ten
+and fails if two become structurally identical.
+
+Preamble patches (`lmodern` font, `\sloppy`, `\emergencystretch`) are applied at
+runtime to prevent overflow and font-fallback artifacts.
+
+**One page is a hard requirement.** The compiler compacts in four escalating
+levels and stops at the first that fits:
+
+| Level | What it changes |
+| ----- | --------------- |
+| 0 | Nothing. The document exactly as generated. |
+| 1 | List spacing only (`itemsep`, `topsep`, `titlespacing`). Type size and margins untouched. |
+| 2 | Adds a 0.94 line spread and narrows margins to 0.5 cm / 0.8 cm. Still 11pt. |
+| 3 | Reduces the body text from 11pt to 10pt. |
+
+The order matters. Jumping straight to level 3 spent the most aggressive
+setting on documents that level 1 already fitted, delivering 10pt text with
+near-zero margins for no benefit — measured on a CV that overflowed to two
+pages and fitted at level 1. Each level is a real cost to legibility, so the
+compiler spends the cheapest one that works. Past level 3 the document is
+refused with the page count rather than truncated or set in a smaller face.
+
+The shared wall-clock budget still bounds the whole escalation, and it stops
+early when too little time remains for another pass to finish, so a clear layout
+error is never reported as a timeout.
+
+### PDF content validation
+
+A PDF that compiles is not a PDF that is correct. `app/services/cv/pdf_validation.py`
+parses the generated file back and checks it, so a silent rendering failure
+becomes a failed request instead of a document the applicant sends.
+
+`validate_pdf_content(pdf_bytes, expected_pages=1)` is **fail-closed**: it raises
+`PDFValidationError` on the first problem rather than returning a report with a
+flag. It checks:
+
+- **page count** against the expected value;
+- **not blank** — a page that renders empty is a failure, not a short CV;
+- **sections** — the section headings the CV was built with are found in the
+  extracted text, so a lost section is caught;
+- **unrendered characters** — Unicode replacement characters mean a glyph did
+  not render;
+- **LaTeX artifacts** — unexpanded commands or stray markup in the text;
+- **content retention** — the fraction of the source CV's content words that
+  survived into the PDF, against a minimum threshold. A PDF that dropped half the
+  CV is refused.
+
+`missing_tokens` in the report carries the *names* of the lost words, because a
+CV's words are the candidate's personal data and must not be reproduced in a log
+or an error message.
+
+Over HTTP:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/resume/validate-pdf \
+     -H "X-API-Key: $API_KEY" \
+     -F "pdf_file=@cv.pdf"
+```
+
+which answers `{"valid": true, "pages": 1, "problems": []}`.
+
+`GET /api/v1/resume/pipeline-metrics` reports the same picture across runs:
+generations attempted, succeeded, LLM calls made, retries, and average duration.
+
 
 ---
 
@@ -643,7 +1329,7 @@ Retained as-is. Each generates structured content for its domain.
 
 ## Application Tracking
 
-`app/services/tracking/tracker.py` implements a SQLite-backed application tracker at `data/applications.db`. Schema covers company, role, URL, ATS score, status, timestamps, and freeform notes. Standard CRUD operations.
+`app/services/tracking/tracker.py` implements a SQLite-backed application tracker at `data/applications.db`. The database is runtime data and is intentionally ignored/untracked; back it up before migrations and never commit it because it contains employment history and URLs. Schema covers company, role, URL, ATS score, status, timestamps, and freeform notes. Standard CRUD operations.
 
 ---
 
@@ -651,31 +1337,72 @@ Retained as-is. Each generates structured content for its domain.
 
 <!-- BEGIN:AUTO:TESTS -->
 
-**Total tests: 12** across 6 files.
+**Total tests: 935** across 40 files.
 
 | Test file | Count |
 |-----------|-------|
+| `tests/test_agent_core.py` | 24 |
 | `tests/test_analyzer.py` | 3 |
+| `tests/test_answer_engine.py` | 11 |
 | `tests/test_api.py` | 1 |
+| `tests/test_automation_correctness.py` | 11 |
+| `tests/test_browser_use_security.py` | 11 |
+| `tests/test_compaction_escalation.py` | 10 |
+| `tests/test_compiler_diagnostics.py` | 19 |
+| `tests/test_context_budgeting.py` | 24 |
 | `tests/test_cv_layouts.py` | 0 |
+| `tests/test_dashboard_workflow.py` | 25 |
+| `tests/test_description_parser.py` | 12 |
+| `tests/test_discovery.py` | 3 |
+| `tests/test_documentation_consistency.py` | 29 |
+| `tests/test_e2e_pipeline.py` | 2 |
+| `tests/test_error_recovery.py` | 8 |
 | `tests/test_gateway.py` | 1 |
 | `tests/test_german_minimal_ats.py` | 7 |
-| `tests/test_parser.py` | 0 |
+| `tests/test_latex_escape.py` | 58 |
+| `tests/test_latex_special_characters_compile.py` | 20 |
+| `tests/test_live_status.py` | 3 |
+| `tests/test_llm_routing.py` | 53 |
+| `tests/test_mock_ats_form.py` | 12 |
+| `tests/test_new_sources.py` | 14 |
+| `tests/test_ollama_qwen3_generation.py` | 85 |
+| `tests/test_orchestrator_retry.py` | 10 |
+| `tests/test_package_validator.py` | 9 |
+| `tests/test_parser.py` | 4 |
+| `tests/test_pdf_compiler.py` | 20 |
+| `tests/test_pdf_content_validation.py` | 27 |
+| `tests/test_pdf_layouts.py` | 7 |
+| `tests/test_provider_registry.py` | 53 |
+| `tests/test_retry_and_call_count.py` | 15 |
+| `tests/test_review_regressions.py` | 11 |
+| `tests/test_second_audit.py` | 8 |
+| `tests/test_security.py` | 8 |
+| `tests/test_structured_llm.py` | 3 |
+| `tests/test_structured_logger.py` | 6 |
+| `tests/test_variant_router.py` | 10 |
+| `tests/test_verification.py` | 6 |
 
 <!-- END:AUTO:TESTS -->
 
 ```bash
-python -m pytest -v                      # full suite
-python -m pytest tests/test_analyzer.py
-python -m pytest tests/test_api.py
-python -m pytest tests/test_gateway.py
-python -m pytest tests/test_parser.py
-python -m pytest tests/test_german_minimal_ats.py
+python -m pytest -q                              # full suite
+python -m pytest tests/test_dashboard_workflow.py # a single module
+python -m pytest -m "not integration" -q          # skip tests that need a real key
 
-python tests/fixtures/run_smoke_tests.py # ad-hoc live smoke test
+python -m scripts.run_smoke_tests                 # ad-hoc live smoke test
+python -m scripts.llm_smoke                      # one prompt per provider
+python -m scripts.model_matrix --all             # local models, smoke + pipeline
+python -m scripts.doctor                         # environment diagnosis
 ```
 
-CI runs the full suite on every push to `main`, `master`, or `develop` against Python 3.11 and 3.12.
+Every test in the suite mocks its external dependencies. No test contacts a
+provider, starts a browser, or requires a credential, so the suite runs offline
+and the same way on every machine.
+
+CI runs the full suite on every push to `main`, `master` or `develop` against
+Python 3.11 and 3.12. It installs `pdflatex` via `texlive-latex-base` and
+`texlive-latex-extra`, so the LaTeX and PDF tests execute there rather than
+skipping.
 
 ---
 
@@ -753,6 +1480,150 @@ Expensive UI sections wrapped in `@st.fragment`. Sidebar fetchers use `@st.cache
 - [ ] Streaming LLM responses in the dashboard (Streamlit's execution model makes this expensive; low benefit at single-user scale)
 - [ ] LinkedIn "About" section A/B comparison (niche)
 - [ ] Optional Postgres backend for the tracker (SQLite is sufficient for single-user; Postgres matters only at multi-user scale)
+
+---
+
+## Security
+
+### What the application enforces
+
+**API access.** Every `/api/v1` route requires `X-API-Key` matching `API_KEY`
+from the environment. `docker-compose.yml` refuses to start without it
+(`${API_KEY:?...}`), and both published ports are bound to `127.0.0.1` only, so
+neither the API nor the dashboard is reachable from another machine by default.
+
+**SSRF.** `app/core/security.py` validates every outbound URL the application
+fetches. `file://`, `javascript:`, `data:`, credentials embedded in the authority,
+loopback, link-local, private and reserved addresses are all rejected, as are the
+decimal (`http://2130706433/`) and octal (`http://0177.0.0.1/`) encodings of
+`127.0.0.1`. DNS is resolved and the resulting address is checked, so a hostname
+that resolves to a private address is rejected too, which closes DNS rebinding.
+`app/services/jobs/browser_use_applier.py` applies the same rules to job URLs
+before a browser navigates anywhere.
+
+**Path traversal.** `validate_local_file` resolves the candidate path and
+requires it to sit inside one of `ALLOWED_FILE_ROOTS`, and checks the extension.
+Generated PDFs get unique names rather than reusing a caller-supplied one.
+
+**LaTeX execution.** `pdflatex` runs with `-no-shell-escape` in a private
+temporary directory, never `shell=True`, under a bounded wall-clock timeout, and
+with a total workspace-size cap. The LaTeX source is validated before the
+compiler is invoked at all: it must be a supported A4 article class, and its
+brace and environment structure must balance.
+
+**Compiler diagnostics.** A LaTeX error message is the one place where
+untrusted document text could reach a log or an HTTP response, because `pdflatex`
+echoes the failing source line. `app/services/cv/pdf_compiler.py` handles three
+things separately:
+
+- the candidate's source line is withheld and reported by line number and length
+  only;
+- any value of a secret-named environment variable is replaced wherever it
+  appears, along with recognisable credential shapes (`sk-`, `AIza`, `ghp_`,
+  `gsk_`, `hf_`, `xai-`, JWTs, PEM private-key blocks) for a secret this
+  deployment does not hold;
+- the temporary working directory is replaced, because its path contains the
+  operator's username.
+
+The compiler's own diagnostic is preserved in full — the category, the message,
+line numbers, file names and the offending LaTeX character. An earlier
+implementation replaced every run of four or more letters with a length marker,
+which turned `Unescaped LaTeX character '$'` into `<8 chars><1 bytes>` and made
+every error unactionable. `tests/test_compiler_diagnostics.py` pins both halves:
+39 assertions that real TeX messages survive byte-identical, and that
+credentials, the source text and the working directory do not.
+
+**The local gateway gets no stray credential.** Local providers use plain HTTP
+with no SDK, and a provider with no configured key sends no `Authorization`
+header at all, so a loopback gateway is never handed a placeholder token.
+
+### What is not enforced
+
+- **No rate limiting.** `API_KEY` is a shared secret, not a per-user identity.
+  Do not expose the API to the internet.
+- **Logs are not a trusted sink.** Provider error bodies can echo account
+  identifiers, and a provider's own error text may contain a partially masked
+  key (`xpl_c934****5777`) or a `user_id`. The application redacts credentials
+  it knows about; it cannot redact identifiers a remote service invents. Treat
+  `data/llm_processing.jsonl` and the application log as sensitive.
+- **Resume content is in the database.** `data/applications.db` and
+  `app/data/*.db` hold employment history and URLs. They are gitignored, and
+  they are created with `CREATE TABLE IF NOT EXISTS` on first use rather than
+  shipped, so nothing is lost by not tracking them.
+- **Prompt injection from job descriptions is contained, not impossible.** A
+  posting is untrusted input. The generator fences injected instructions and the
+  factual invariant check refuses output that dropped or altered a stated
+  career fact, but a sufficiently adversarial posting is not a solved problem.
+
+### Handling secrets
+
+- `.env` is gitignored, as is `.env.*`; `.env.example` is explicitly allowed
+  back and contains no values.
+- No credential is written to a log, and `tests/test_documentation_consistency.py`
+  fails the build if `.env.example` grows anything shaped like a key.
+- `git log -p` is a place a removed key can still be found. Rotate a key that
+  was ever committed.
+
+---
+
+## Known limitations
+
+These are real, measured, and left in place deliberately. None of them is
+"almost done".
+
+**A short CV leaves the bottom of the page empty.** This is the content's
+shape, not a layout defect. A two-role CV occupies about 27 % of an A4 page and
+a full one about 77 %; both compile to exactly one page with no compaction. A
+template cannot fill a page without stretching the text, which reads worse than
+the space does. The compiler only ever compacts on overflow and never expands.
+
+**A CV that is too long for one page is refused, not truncated.** After
+escalating through all four compaction levels, a document that still does not
+fit raises a layout error naming the page count. Content is never dropped
+silently. This is the correct trade for an application document, and it is the
+failure mode behind roughly half of `llama3.2`'s pipeline failures.
+
+**Only three local models are reliable end to end.** `qwen3:8b`, `llama3` and
+`gemma4` passed 5/5. `llama3.2` passed 8 of 17. `qwen2.5:7b` fails the invariant
+check. `deepseek-r1:8b` answers but not usefully. `glm-4.7-flash` and
+`qwen3.6` were smoke-tested only. `llama3.3:70b` returns a 500. See
+[Verified status](#verified-status) for the measured numbers.
+
+**No API provider has completed the full pipeline.** All the API rows above are
+smoke tests of a one-word prompt. The failures are credential and billing states
+in one environment, not provider defects, but the honest statement is that
+remote generation through this application is unverified.
+
+**The layout picker shows a schematic, not a rendered page.** The preview is
+drawn from the template's own traits, so it cannot describe a layout the
+generator does not have, but it is not a preview of the final typography, line
+breaks or spacing. A real preview would cost a model call per selection. The
+page says so on screen.
+
+**One-page compaction has a floor.** Level 3 reduces the body text from 11pt to
+10pt with 0.5 cm margins. Past that the document is refused rather than set in a
+smaller face, because a CV set at 8pt is not a CV.
+
+**Sentence-transformers is not installed by default.** `ats_analyzer.py` falls
+back to TF-IDF cosine similarity. The reason is a genuine conflict:
+sentence-transformers needs `regex>=2025.10.22` through transformers, and
+python-jobspy pins `regex<2025.0.0`. Both cannot hold in one environment. Run it
+as a separate service over HTTP if you want real embeddings.
+
+**Python 3.13 loses one discovery source.** python-jobspy has no 3.13-compatible
+release, so its requirements entry is marked `python_version < "3.13"`. The
+import is guarded and the application starts, but the JobSpy source is
+unavailable on 3.13. 3.11 and 3.12 are the tested targets and the Dockerfile
+uses 3.12.
+
+**The text-metric layout fingerprint is weaker than the layouts really are.** It
+groups all ten templates into seven structural families. Visual inspection
+confirms they differ in font, heading case and colour, so the fingerprint
+understates the differences. It is a cheap regression guard, not a description.
+
+**Streamlit's execution model makes some things expensive.** Streaming LLM
+responses into the dashboard and A/B testing the LinkedIn "About" section are
+deferred for that reason, not overlooked.
 
 ---
 

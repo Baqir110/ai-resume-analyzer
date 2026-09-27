@@ -1,246 +1,343 @@
-"""CV Generation Page - Step 2 of workflow."""
+"""
+CV generation: produce the final document.
+
+Uses the shared workflow state for the provider, model and layout, so the choice
+made on the settings page is the one used here. The previous version rendered its
+own copy of the provider selector, which meant a user could set a provider on the
+analysis page and silently generate with a different one.
+
+The DOCX, PDF and LaTeX builders are kept. All three are useful: DOCX is
+editable, PDF is the deliverable, LaTeX is the source for either. Each records
+what produced it, so the preview page and the metrics panel can say which
+provider and model were actually involved.
+"""
+
+from __future__ import annotations
+
+import json
+import time
 
 import streamlit as st
 
+from app.dashboard import theme, workflow
 from app.dashboard.components import (
     clear_result,
     get_result,
     render_error_alert,
-    render_provider_selector,
-    render_quota_card,
     run_with_progress,
     store_result,
 )
-from app.dashboard.helpers import build_file_payload, fetch_quota_status, get_api_base
+from app.dashboard.helpers import clear_cached_status, fetch_quota_status, get_api_base
 
-TEMPLATE_LABELS = {
-    "auto": "🎯 Auto-detect (match JD language)",
-    "international_ats": "International English ATS (Single-Page)",
-    "academic": "Academic / Research (Serif, Education-first)",
-    "technical_lead": "Technical Lead (Open Source + Speaking)",
-    "hr_executive_gold": "HR Gold Standard (Executive)",
-    "german_corporate": "Corporate Slate Navy",
-    "german_minimal_ats": "German Minimal ATS (Single-Column)",
-    "german_modern": "Modern Two-Column",
-    "german_classic": "German Classic Single-Column PDF",
-    "standard": "Standard ATS Single-Column",
-}
-
-PROVIDER_LABELS = {
-    "openai": "OpenAI",
-    "anthropic": "Anthropic",
-    "gemini": "Google Gemini",
-    "groq": "Groq",
-    "deepseek": "DeepSeek",
-    "experiential": "Experiential Cloud",
-}
+_STEPS = [
+    "Loading the resume and the analysis",
+    "Calling the configured LLM provider",
+    "Writing the CV body",
+    "Checking that no fact was invented",
+    "Assembling the LaTeX document",
+    "Compiling with pdflatex",
+    "Reading the PDF back and validating it",
+]
 
 
-def _render_provider_panel(api_base: str) -> tuple[str, str, str]:
-    with st.expander("⚙️ AI Provider & Model", expanded=False):
-        route_mode, provider_or_model = render_provider_selector()
+def _common_data() -> dict:
+    """
+    The form fields every generation endpoint accepts.
 
-        if route_mode == "experiential":
-            provider = "experiential"
-            model_name = provider_or_model
-        else:
-            provider = provider_or_model
-            model_name = ""
+    Built from the shared workflow state, so provider, model and layout cannot
+    drift between what the user chose and what is sent.
+    """
+    choice = workflow.generation_choice()
+    analysis = workflow.get_analysis() or {}
 
-        st.caption(
-            f"Routing: **{route_mode}** · Provider: **{provider}** · "
-            f"Model: **{model_name or '(default)'}**"
-        )
-
-        quota_data = fetch_quota_status(api_base)
-        if quota_data:
-            st.divider()
-            st.markdown("**Live quota status**")
-            for prov, data in quota_data.items():
-                render_quota_card(prov, data, PROVIDER_LABELS)
-
-    return route_mode, provider, model_name
+    return {
+        "job_description": workflow.get_job().strip(),
+        "provider": choice["provider"],
+        "model_name": choice["model_name"],
+        "route_mode": choice["route_mode"],
+        "layout_style": workflow.get_layout(),
+        "improvement_suggestions": json.dumps(analysis.get("improvement_suggestions") or []),
+    }
 
 
-def render_recommendation_card(result: dict) -> None:
-    """Render the recommended CV layout card."""
-    recommendation = (result or {}).get("recommendation") or {}
-    if not recommendation:
-        return
-
-    label = recommendation.get("label", "Standard")
-    reason = recommendation.get("reason", "")
-
-    with st.container(border=True):
-        st.subheader("Recommended CV format")
-        if recommendation.get("language_mismatch", False):
-            st.warning(f"**{label}** — {reason}")
-        else:
-            st.success(f"**{label}** — {reason}")
-
-
-def _run_build(
-    kind: str,
-    label: str,
-    endpoint: str,
-    payload: dict,
+def _store(
+    key: str,
+    response,
     filename: str,
     mime: str,
+    started: float,
 ) -> None:
-    """Run a build with animated progress; store the result."""
-    clear_result(kind)
+    """Record a successful generation, whatever shape the response took."""
+    elapsed = round(time.perf_counter() - started, 2)
+    content_type = response.headers.get("Content-Type", "")
+    choice = workflow.generation_choice()
 
-    steps = [
-        "Uploading resume + job description",
-        f"Sending request to {endpoint.split('/')[-1]}",
-        "LLM is tailoring the CV content",
-        "Assembling the document from the template",
-    ]
-    if kind == "pdf":
-        steps.append("Compiling LaTeX to PDF with pdflatex")
-    elif kind == "docx":
-        steps.append("Building Word document")
-    steps.append("Finalizing and returning the file")
+    payload = b""
+    if "json" in content_type:
+        try:
+            body = response.json()
+        except Exception:
+            body = {}
 
-    response, elapsed = run_with_progress(
-        label=label,
-        endpoint=endpoint,
-        data=payload,
-        files=build_file_payload(),
-        steps=steps,
-        hint="Usually 20–45 seconds.",
-        timeout=180,
-        seconds_per_step=5.0,
+        encoded = body.get(f"{key}_base64") or body.get("content") or body.get("document") or ""
+        if isinstance(encoded, str) and encoded:
+            import base64
+
+            try:
+                payload = base64.b64decode(encoded)
+            except Exception:
+                payload = encoded.encode("utf-8", errors="replace")
+        elif isinstance(encoded, (bytes, bytearray)):
+            payload = bytes(encoded)
+    else:
+        payload = response.content
+
+    store_result(
+        key,
+        {
+            "content": payload,
+            "filename": filename,
+            "mime": mime,
+            "elapsed": elapsed,
+            "size_kb": round(len(payload) / 1024, 1),
+            "provider": choice["provider"],
+            "model": choice["model_name"],
+            "layout": workflow.get_layout(),
+        },
     )
 
-    if response is None:
+    workflow.set_cv_meta(
+        {
+            "provider": choice["provider"],
+            "model": choice["model_name"],
+            "layout": workflow.get_layout(),
+            "seconds": elapsed,
+            "endpoint": f"/generate-{key}",
+        }
+    )
+    clear_cached_status(get_api_base())
+
+
+def _build(api_base: str, key: str) -> None:
+    """
+    Run one generation and store the result.
+
+    Shared by the three builders so the timeout, the progress steps and the
+    error handling cannot differ between them.
+    """
+    upload = workflow.get_upload()
+    if not upload:
         return
 
-    if response.status_code == 200:
-        store_result(
-            kind,
-            {
-                "content": response.content,
-                "filename": filename,
-                "mime": mime,
-                "elapsed": elapsed,
-                "size_kb": len(response.content) / 1024,
-            },
-        )
+    filename, payload, mime = upload
+
+    endpoints = {
+        "pdf": (
+            "/generate-german-cv",
+            f"cv-{workflow.get_layout()}.pdf",
+            "application/pdf",
+            "📄 Generating PDF",
+        ),
+        "tex": (
+            "/generate-tex-cv",
+            f"cv-{workflow.get_layout()}.tex",
+            "text/plain",
+            "📝 Generating LaTeX",
+        ),
+        "docx": (
+            "/generate-full",
+            f"cv-{workflow.get_layout()}.docx",
+            "application/vnd.openxmlformats-officedocument." "wordprocessingml.document",
+            "📘 Generating DOCX",
+        ),
+    }
+
+    path, out_name, out_mime, label = endpoints[key]
+
+    clear_result(key)
+    if key == "pdf":
+        # A new PDF invalidates the previous validation report: it described a
+        # different document.
+        clear_result("pdf_validation")
+
+    started = time.perf_counter()
+    response, _elapsed = run_with_progress(
+        label=label,
+        endpoint=f"{api_base}/api/v1/resume{path}",
+        data=_common_data(),
+        files={"resume_file": (filename, payload, mime)},
+        steps=_STEPS,
+        hint="2 model calls for PDF and LaTeX. Usually 30–90 seconds locally.",
+        timeout=420,
+        seconds_per_step=9.0,
+    )
+
+    if response is not None and 200 <= response.status_code < 300:
+        _store(key, response, out_name, out_mime, started)
         st.rerun()
-    else:
+    elif response is not None:
         render_error_alert(response)
 
 
-def _render_download(kind: str, label: str) -> None:
-    build = get_result(kind)
-    if not build:
-        return
+def _render_selection() -> None:
+    """Show and, if needed, change the generation settings."""
+    choice = workflow.generation_choice()
 
-    st.success(
-        f"✅ **{label} ready** · `{build['filename']}` · "
-        f"{build['size_kb']:.1f} KB · built in **{build['elapsed']:.1f}s**"
+    theme.section_header("Generation settings", "⚙️")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        theme.value_card("Provider", choice["provider"], "")
+    with c2:
+        theme.value_card("Model", choice["model_name"] or "(provider default)", "")
+    with c3:
+        theme.value_card("Layout", workflow.get_layout(), "")
+
+    if st.button("⚙️ Change provider, model or layout"):
+        st.session_state[workflow.KEY_PAGE] = "llm_settings"
+        st.rerun()
+
+    if st.button("▤ Choose a different layout"):
+        st.session_state[workflow.KEY_PAGE] = "layout_picker"
+        st.rerun()
+
+
+def _render_outputs() -> None:
+    """Download buttons for whatever exists, plus a link to the preview."""
+    theme.section_header("Generated", "📦")
+
+    specs = (
+        (
+            "docx",
+            "📘 DOCX",
+            "application/vnd.openxmlformats-officedocument." "wordprocessingml.document",
+        ),
+        ("pdf", "📄 PDF", "application/pdf"),
+        ("tex", "📝 LaTeX", "text/plain"),
     )
-    st.download_button(
-        f"📥 Download {label}",
-        build["content"],
-        build["filename"],
-        build["mime"],
-        width="stretch",
-        type="primary",
-        key=f"download_{kind}",
-    )
 
+    present = [(k, label, m) for k, label, m in specs if get_result(k)]
 
-def render_cv_generation_page():
-    if not st.session_state.get("last_analysis"):
-        st.info("Complete Step 1 (Analyze) first")
-        return
-
-    st.header("Generate your tailored CV")
-
-    api_base = get_api_base()
-    route_mode, provider, model_name = _render_provider_panel(api_base)
-
-    common_data = {
-        "job_description": st.session_state.get("job_desc", ""),
-        "provider": provider,
-        "model_name": model_name or "",
-        "route_mode": route_mode,
-    }
-
-    tab1, tab2 = st.tabs(["📄 Standard ATS Resume", "🇩🇪 German Lebenslauf / PDF Options"])
-
-    with tab1:
-        st.caption(
-            "Layout is auto-selected from the job description's language "
-            "(English JD → compact single-page English layout)."
+    if not present:
+        theme.empty_state(
+            "Nothing generated yet",
+            "Pick a format above. Each one is a separate model call.",
+            icon="📦",
         )
+        return
 
-        if st.button(
-            "🪄 Build Tailored Resume (.docx)",
-            width="stretch",
-            type="primary",
-            key="build_docx_btn",
-            help="Generates a Word document. Usually 15–30 seconds.",
-        ):
-            _run_build(
-                kind="docx",
-                label="DOCX resume",
-                endpoint=f"{api_base}/api/v1/resume/generate-full",
-                payload={**common_data, "layout_style": "auto"},
-                filename="Optimized_Tailored_Resume.docx",
-                mime=("application/vnd.openxmlformats-officedocument" ".wordprocessingml.document"),
+    for key, label, mime in present:
+        result = get_result(key) or {}
+        content = result.get("content")
+        if not isinstance(content, (bytes, bytearray)) or not content:
+            continue
+
+        left, right = st.columns([3, 1])
+        with left:
+            theme.kv_table(
+                [
+                    (label, result.get("filename")),
+                    ("Size", f"{result.get('size_kb', 0):,.0f} KB"),
+                    ("Time", f"{result.get('elapsed', 0):.1f}s"),
+                ]
+            )
+        with right:
+            st.download_button(
+                f"⬇️ {label}",
+                data=content,
+                file_name=result.get("filename") or f"cv.{key}",
+                mime=mime,
+                width="stretch",
+                key=f"gen_download_{key}",
             )
 
-        _render_download("docx", "DOCX resume")
+    theme.rule()
+    if get_result("pdf"):
+        if st.button("👁️ Preview and validate the PDF", type="primary"):
+            st.session_state[workflow.KEY_PAGE] = "pdf_preview"
+            st.rerun()
 
-    with tab2:
-        template_options = list(TEMPLATE_LABELS.keys())
-        selected_layout = st.selectbox(
-            "Layout Style",
-            template_options,
-            index=0,
-            format_func=lambda x: TEMPLATE_LABELS[x],
-            key="cv_layout_select",
+
+def render_cv_generation_page() -> None:
+    """Render the CV generation page."""
+    theme.step_header(
+        "📄",
+        "CV Generation",
+        "Produce the final document in the format you need.",
+    )
+
+    api_base = get_api_base()
+
+    if not workflow.has_analysis():
+        theme.empty_state(
+            "No analysis yet",
+            "Generation works from the gaps the ATS analysis found. Without "
+            "it there is nothing to target, and the generator would have to "
+            "guess.",
+            action="Open ATS Analysis",
+            icon="🔍",
+        )
+        if st.button("← Run the ATS analysis"):
+            st.session_state[workflow.KEY_PAGE] = "ats_analysis"
+            st.rerun()
+        return
+
+    if not workflow.has_upload() or not workflow.get_job().strip():
+        theme.empty_state(
+            "Missing an input",
+            "Generation needs both a resume and a job description.",
+            action="Open steps 1 and 2",
+            icon="📎",
+        )
+        return
+
+    _render_selection()
+
+    analysis = workflow.get_analysis() or {}
+    if analysis.get("ats_match_score") is not None:
+        st.caption(
+            f"Targeting the posting the resume currently scores "
+            f"{analysis['ats_match_score']:.1f} against, addressing "
+            f"{len(analysis.get('missing_skills') or [])} missing skill(s)."
         )
 
-        st.caption("⏱️ PDF builds typically take 20–45 seconds (LLM + LaTeX).")
+    theme.rule()
+    theme.section_header("Output format", "📤")
 
-        col1, col2 = st.columns(2)
+    format_col, quota_col = st.columns([2, 1])
 
-        with col1:
-            if st.button(
-                "📄 Build PDF",
-                width="stretch",
-                type="primary",
-                key="build_pdf_btn",
-                help="Runs LLM tailoring, then compiles LaTeX to PDF.",
-            ):
-                _run_build(
-                    kind="pdf",
-                    label="PDF",
-                    endpoint=f"{api_base}/api/v1/resume/generate-german-cv",
-                    payload={**common_data, "layout_style": selected_layout},
-                    filename=f"CV_{selected_layout}.pdf",
-                    mime="application/pdf",
-                )
+    with format_col:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            if st.button("📄 PDF", type="primary", width="stretch"):
+                _build(api_base, "pdf")
+        with c2:
+            if st.button("📝 LaTeX", width="stretch"):
+                _build(api_base, "tex")
+        with c3:
+            if st.button("📘 DOCX", width="stretch"):
+                _build(api_base, "docx")
 
-        with col2:
-            if st.button(
-                "🛠️ Build LaTeX Source (.tex)",
-                width="stretch",
-                key="build_tex_btn",
-                help="Raw LaTeX source — faster than a PDF build.",
-            ):
-                _run_build(
-                    kind="tex",
-                    label="LaTeX source",
-                    endpoint=f"{api_base}/api/v1/resume/generate-tex-cv",
-                    payload={**common_data, "layout_style": selected_layout},
-                    filename=f"CV_{selected_layout}.tex",
-                    mime="text/plain",
-                )
+    with quota_col:
+        quota = fetch_quota_status(api_base)
+        if quota:
+            limited = [
+                (name, data) for name, data in quota.items() if name not in {"ollama", "omniroute"}
+            ]
+            if limited:
+                name, data = limited[0]
+                remaining = data.get("requests_remaining")
+                if remaining is not None:
+                    theme.value_card(
+                        f"{name} requests left",
+                        str(remaining),
+                        "rolling window",
+                    )
+            else:
+                st.caption("No rate-limited provider is in use.")
 
-        _render_download("pdf", "PDF")
-        _render_download("tex", "LaTeX source")
+    theme.rule()
+    _render_outputs()
+
+    st.caption(
+        "Each format is a separate request. Generating all three makes three " "calls, not one."
+    )

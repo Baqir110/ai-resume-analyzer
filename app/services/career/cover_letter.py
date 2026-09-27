@@ -34,7 +34,7 @@ class CoverLetterService:
         company_name: str = "Target Company",
         tone: str = "formal",
         template: str | None = "classic_professional",
-        provider: str = "gemini",
+        provider: str | None = None,
     ) -> dict[str, Any]:
         """
         Generates a cover letter, a cold outreach email, and raw LaTeX source.
@@ -103,6 +103,7 @@ JOB DESCRIPTION:
         raw_response = LLMService.call_llm(
             prompt=prompt,
             provider=provider,
+            task="full_cv_generation",
         )
 
         parts = raw_response.split("---SECTION_BREAK---")

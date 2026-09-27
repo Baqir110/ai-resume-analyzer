@@ -1,8 +1,9 @@
 """API endpoints for new features."""
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
 from app.api.utils import parse_json_list as _parse_json_list
+from app.core.security import require_api_key
 from app.services.analysis.authenticity_checker import AuthenticityChecker
 from app.services.analysis.market_insights import MarketInsightsEngine
 from app.services.analysis.score_explainability import ScoreExplainabilityEngine
@@ -12,7 +13,7 @@ from app.services.parsing.resume_parser import extract_text_from_file
 from app.services.tracking.collaborative_feedback import CollaborativeFeedbackManager
 from app.services.tracking.version_manager import ResumeVersionManager
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_api_key)])
 
 scope_engine = ScoreExplainabilityEngine()
 market_engine = MarketInsightsEngine()
@@ -73,11 +74,11 @@ async def score_breakdown(
 
 @router.get("/market-insights")
 async def market_insights(
-    role: str,
-    location: str,
+    role: str = Query(..., min_length=1, max_length=300),
+    location: str = Query(..., min_length=1, max_length=300),
     seniority: str = "mid",
-    provider: str = "experiential",
-    route_mode: str = "experiential",
+    provider: str | None = None,
+    route_mode: str | None = None,
 ):
     """Get AI-estimated job market intelligence for a role."""
     insights = await market_engine.get_market_insights(
@@ -99,12 +100,13 @@ async def market_insights(
 async def generate_skill_roadmap(
     current_skills: str = Form(
         ...,
+        max_length=20_000,
         description='JSON array of skills, e.g. ["python", "sql"]',
     ),
-    target_role: str = Form(...),
-    months_available: int = Form(6),
-    provider: str = Form("experiential"),
-    route_mode: str = Form("experiential"),
+    target_role: str = Form(..., max_length=300),
+    months_available: int = Form(6, ge=1, le=120),
+    provider: str | None = Form(None),
+    route_mode: str | None = Form(None),
 ):
     """Generate a personalised, AI-driven skill development roadmap."""
     skills = _parse_json_list(current_skills, "current_skills")
@@ -149,12 +151,12 @@ async def check_authenticity(
 
 @router.post("/versions/save")
 async def save_resume_version(
-    user_id: str = Form(...),
-    original_text: str = Form(...),
-    optimized_text: str = Form(...),
-    ats_score: int = Form(...),
-    job_id: str | None = Form(None),
-    notes: str | None = Form(None),
+    user_id: str = Form(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:@-]+$"),
+    original_text: str = Form(..., min_length=1, max_length=200_000),
+    optimized_text: str = Form(..., min_length=1, max_length=200_000),
+    ats_score: int = Form(..., ge=0, le=100),
+    job_id: str | None = Form(None, max_length=256),
+    notes: str | None = Form(None, max_length=10_000),
 ):
     """Save a resume version."""
     version_id = version_manager.save_version(
@@ -168,13 +170,6 @@ async def save_resume_version(
     return {"status": "success", "version_id": version_id}
 
 
-@router.get("/versions/{user_id}")
-async def list_versions(user_id: str):
-    """List user's resume versions."""
-    versions = version_manager.get_versions(user_id)
-    return {"status": "success", "versions": versions}
-
-
 @router.get("/versions/compare")
 async def compare_versions(
     version_id_1: int,
@@ -182,7 +177,16 @@ async def compare_versions(
 ):
     """Compare two resume versions."""
     comparison = version_manager.compare_versions(version_id_1, version_id_2)
+    if "error" in comparison:
+        raise HTTPException(status_code=404, detail=comparison["error"])
     return {"status": "success", "comparison": comparison}
+
+
+@router.get("/versions/{user_id}")
+async def list_versions(user_id: str):
+    """List user's resume versions."""
+    versions = version_manager.get_versions(user_id)
+    return {"status": "success", "versions": versions}
 
 
 # ---------------------------------------------------------------------------
@@ -192,8 +196,8 @@ async def compare_versions(
 
 @router.post("/interview/question")
 async def generate_interview_question(
-    family: str = Form(...),
-    context: str = Form("Software Engineer"),
+    family: str = Form(..., min_length=1, max_length=100),
+    context: str = Form("Software Engineer", max_length=2_000),
 ):
     """Generate interview practice question."""
     question = await interview_sim.generate_interview_question(family, context)
@@ -202,8 +206,8 @@ async def generate_interview_question(
 
 @router.post("/interview/evaluate")
 async def evaluate_interview_answer(
-    question_id: int = Form(...),
-    user_answer: str = Form(...),
+    question_id: int = Form(..., ge=1),
+    user_answer: str = Form(..., min_length=1, max_length=20_000),
     expected_topics: str = Form(
         ...,
         description='JSON array of expected topics, e.g. ["oop", "git"]',
@@ -229,10 +233,10 @@ async def evaluate_interview_answer(
 
 @router.post("/feedback/thread")
 async def create_feedback_thread(
-    resume_id: int = Form(...),
-    section: str = Form(...),
-    author: str = Form(...),
-    line_number: int | None = Form(None),
+    resume_id: int = Form(..., ge=1),
+    section: str = Form(..., min_length=1, max_length=200),
+    author: str = Form(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:@-]+$"),
+    line_number: int | None = Form(None, ge=1, le=100_000),
 ):
     """Create feedback thread for resume section."""
     thread_id = feedback_manager.create_feedback_thread(
@@ -246,12 +250,12 @@ async def create_feedback_thread(
 
 @router.post("/feedback/comment")
 async def add_feedback_comment(
-    thread_id: int = Form(...),
-    author: str = Form(...),
-    comment: str = Form(...),
-    suggestion: str | None = Form(None),
-    category: str = Form("clarity"),
-    severity: str = Form("medium"),
+    thread_id: int = Form(..., ge=1),
+    author: str = Form(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:@-]+$"),
+    comment: str = Form(..., min_length=1, max_length=20_000),
+    suggestion: str | None = Form(None, max_length=20_000),
+    category: str = Form("clarity", max_length=64),
+    severity: str = Form("medium", max_length=64),
 ):
     """Add comment to feedback thread."""
     comment_id = feedback_manager.add_comment(

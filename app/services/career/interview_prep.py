@@ -13,7 +13,7 @@ class InterviewPrepService:
         job_description: str,
         missing_skills: list[str],
         family: str = "technical",
-        provider: str = "gemini",
+        provider: str | None = None,
     ) -> dict[str, Any]:
         """
         Generates role-specific interview questions and gap defenses.
@@ -65,6 +65,7 @@ JOB DESCRIPTION:
         raw_response = LLMService.call_llm(
             prompt=prompt,
             provider=provider,
+            task="full_cv_generation",
         )
 
         try:

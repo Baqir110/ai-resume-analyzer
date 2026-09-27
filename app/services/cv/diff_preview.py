@@ -1,4 +1,5 @@
 import difflib
+import html
 from typing import Any
 
 
@@ -8,6 +9,10 @@ class DiffPreviewService:
         """
         Generates word-level diffs with HTML/Markdown formatting and change statistics.
         """
+        if not isinstance(original_text, str) or not isinstance(optimized_text, str):
+            raise ValueError("Diff inputs must be strings")
+        if len(original_text) > 100_000 or len(optimized_text) > 100_000:
+            raise ValueError("Diff input is too large")
         orig_words = original_text.split()
         opt_words = optimized_text.split()
 
@@ -19,10 +24,10 @@ class DiffPreviewService:
 
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
             if tag == "equal":
-                diff_html_tokens.append(" ".join(orig_words[i1:i2]))
+                diff_html_tokens.append(html.escape(" ".join(orig_words[i1:i2])))
             elif tag == "replace":
-                deleted = " ".join(orig_words[i1:i2])
-                added = " ".join(opt_words[j1:j2])
+                deleted = html.escape(" ".join(orig_words[i1:i2]))
+                added = html.escape(" ".join(opt_words[j1:j2]))
                 diff_html_tokens.append(
                     f'<del style="color: #d9534f; background-color: #fdf7f7; text-decoration: line-through;">{deleted}</del>'
                 )
@@ -32,13 +37,13 @@ class DiffPreviewService:
                 deletions += i2 - i1
                 additions += j2 - j1
             elif tag == "delete":
-                deleted = " ".join(orig_words[i1:i2])
+                deleted = html.escape(" ".join(orig_words[i1:i2]))
                 diff_html_tokens.append(
                     f'<del style="color: #d9534f; background-color: #fdf7f7; text-decoration: line-through;">{deleted}</del>'
                 )
                 deletions += i2 - i1
             elif tag == "insert":
-                added = " ".join(opt_words[j1:j2])
+                added = html.escape(" ".join(opt_words[j1:j2]))
                 diff_html_tokens.append(
                     f'<ins style="color: #5cb85c; background-color: #f0fff0; text-decoration: none; font-weight: bold;">{added}</ins>'
                 )
@@ -63,6 +68,8 @@ class DiffPreviewService:
         """
         Pairs and compares lists of bullet points.
         """
+        if len(original_bullets) > 500 or len(optimized_bullets) > 500:
+            raise ValueError("Too many bullets")
         results = []
         max_len = max(len(original_bullets), len(optimized_bullets))
 

@@ -178,7 +178,7 @@ class CollaborativeFeedbackManager:
                 """
                 SELECT
                     COUNT(DISTINCT t.id) as total_threads,
-                    SUM(CASE WHEN t.resolved = 1 THEN 1 ELSE 0 END) as resolved_threads,
+                    COUNT(DISTINCT CASE WHEN t.resolved = 1 THEN t.id END) as resolved_threads,
                     COUNT(c.id) as total_comments
                 FROM feedback_threads t
                 LEFT JOIN feedback_comments c ON t.id = c.thread_id

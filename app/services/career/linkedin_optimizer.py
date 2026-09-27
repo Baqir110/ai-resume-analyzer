@@ -10,7 +10,7 @@ class LinkedInOptimizerService:
         cls,
         resume_text: str,
         target_role: str = "Software Engineer",
-        provider: str = "gemini",
+        provider: str | None = None,
     ) -> dict[str, Any]:
         """
         Generates 3 punchy LinkedIn headlines and a 1st-person LinkedIn About section.
@@ -32,6 +32,7 @@ RESUME:
         raw_response = LLMService.call_llm(
             prompt=prompt,
             provider=provider,
+            task="cv_tailoring",
         )
 
         try:

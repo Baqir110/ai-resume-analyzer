@@ -50,7 +50,7 @@ def render_advanced_tools():
             with st.status("⏳ Comparing bullets…", expanded=False) as status:
                 response = make_api_request(
                     f"{api_base}/api/v1/resume/diff-preview",
-                    data=payload,
+                    json=payload,
                     method="POST",
                     timeout=30,
                 )

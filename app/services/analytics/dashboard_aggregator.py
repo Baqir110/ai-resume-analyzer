@@ -30,47 +30,65 @@ def _parse_iso(ts: str) -> datetime | None:
 
 
 def _load_events(log_path: Path, since_hours: int | None) -> list[dict]:
+    import math
+
     if not log_path.exists():
         return []
-    cutoff: datetime | None = None
-    if since_hours is not None:
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
-
+    cutoff = (
+        None if since_hours is None else datetime.now(timezone.utc) - timedelta(hours=since_hours)
+    )
     events: list[dict] = []
     try:
-        with log_path.open("r", encoding="utf-8") as fh:
+        with log_path.open("r", encoding="utf-8", errors="replace") as fh:
             for raw in fh:
-                raw = raw.strip()
-                if not raw:
-                    continue
                 try:
                     ev = json.loads(raw)
                 except json.JSONDecodeError:
                     continue
-                if cutoff is not None:
-                    ts = _parse_iso(ev.get("timestamp", ""))
-                    if ts is None or ts < cutoff:
-                        continue
+                if not isinstance(ev, dict):
+                    continue
+                timestamp = _parse_iso(ev.get("timestamp", ""))
+                if cutoff is not None and (timestamp is None or timestamp < cutoff):
+                    continue
+                ev["timestamp"] = timestamp.isoformat() if timestamp is not None else ""
+                for field in ("total_tokens", "estimated_cost_usd", "duration_ms"):
+                    try:
+                        value = float(ev.get(field) or 0)
+                        if not math.isfinite(value) or value < 0:
+                            value = 0.0
+                    except (TypeError, ValueError, OverflowError):
+                        value = 0.0
+                    ev[field] = int(value) if field == "total_tokens" else value
+                ev["error"] = str(ev.get("error") or "")
+                for field in ("matching_skills", "missing_skills"):
+                    skills = ev.get(field)
+                    ev[field] = (
+                        [skill for skill in skills if isinstance(skill, str)]
+                        if isinstance(skills, list)
+                        else []
+                    )
                 events.append(ev)
     except OSError:
         return []
+    # Aggregation is order-independent, but recent_errors must keep the newest
+    # records before its size limit is applied, even for out-of-order writes.
+    events.sort(key=lambda event: event["timestamp"], reverse=True)
     return events
 
 
 def _load_applications(db_path: Path) -> list[dict]:
+    from contextlib import closing
+
     if not db_path.exists():
         return []
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT company_name, job_title, ats_score, status, created_at "
-            "FROM applications ORDER BY created_at DESC"
-        )
-        rows = [dict(r) for r in cursor.fetchall()]
-        conn.close()
-        return rows
+        with closing(sqlite3.connect(db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT company_name, job_title, ats_score, status, created_at "
+                "FROM applications ORDER BY created_at DESC"
+            )
+            return [dict(row) for row in cursor.fetchall()]
     except sqlite3.Error:
         return []
 

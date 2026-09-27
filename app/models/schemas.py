@@ -35,6 +35,16 @@ class AnalysisResponse(BaseModel):
     )
     recommendation: RecommendationDetails | None = Field(default=None)
 
+    # ------------------------------------------------------------
+    # Parsed plain text of the uploaded resume, returned to the
+    # caller so downstream services (auto-apply pipeline) can use it
+    # without re-parsing the original PDF/DOCX.
+    # ------------------------------------------------------------
+    resume_text: str | None = Field(
+        default=None,
+        json_schema_extra={"example": "Example Candidate\nBerlin, Germany\n..."},
+    )
+
 
 class ErrorResponse(BaseModel):
     status: str = Field(default="error", json_schema_extra={"example": "error"})

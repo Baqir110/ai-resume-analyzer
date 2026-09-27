@@ -28,15 +28,24 @@ htmlcov/
 # ==============================================================================
 # Env / secrets (compose mounts .env at runtime)
 .env
-.env.local
-.env.production
-.env.development
+.env.*
+!.env.example
 # NOTE: .env.example is intentionally NOT ignored — Dockerfile copies it
 
 # ==============================================================================
 # Data & runtime artifacts
 # ==============================================================================
 data/llm_processing.jsonl
+data/applicant_profile.yaml
+data/applicant_profile.local.yaml
+data/generated/
+data/screenshots/
+data/browser_profiles/
+data/agent_events.jsonl
+data/agent_events.local.jsonl
+data/job_applications.jsonl
+data/*.jsonl
+data/applications.local.db
 data/*.db
 data/*.sqlite
 outputs/

@@ -91,21 +91,15 @@ class SkillProgressionTracker:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO skill_progression
+                INSERT INTO skill_progression
                 (user_id, skill, first_detected, last_detected, proficiency_level)
-                VALUES (
-                    ?,
-                    ?,
-                    COALESCE(
-                        (SELECT first_detected FROM skill_progression
-                         WHERE user_id = ? AND skill = ?),
-                        CURRENT_TIMESTAMP
-                    ),
-                    CURRENT_TIMESTAMP,
-                    ?
-                )
+                VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
+                ON CONFLICT(user_id, skill) DO UPDATE SET
+                    last_detected = excluded.last_detected,
+                    proficiency_level = excluded.proficiency_level,
+                    job_count = skill_progression.job_count + 1
                 """,
-                (user_id, skill, user_id, skill, proficiency),
+                (user_id, skill, proficiency),
             )
             conn.commit()
 
@@ -123,8 +117,8 @@ class SkillProgressionTracker:
         current_skills: list[str],
         target_role: str,
         months_available: int = 6,
-        provider: str = "experiential",
-        route_mode: str = "experiential",
+        provider: str | None = None,
+        route_mode: str | None = None,
     ) -> dict[str, Any]:
         current_skills = [s.strip() for s in (current_skills or []) if s and s.strip()]
         target_role = (target_role or "").strip()
@@ -134,10 +128,10 @@ class SkillProgressionTracker:
             return {"error": "target_role is required"}
 
         prompt = (
+            f"{_SYSTEM_PROMPT}\n\n"
             f"Current skills: {', '.join(current_skills) or '(none provided)'}\n"
             f"Target role: {target_role}\n"
-            f"Time budget: {months_available} months\n\n"
-            "Produce the JSON described in the system prompt."
+            f"Time budget: {months_available} months\n"
         )
 
         try:
@@ -162,10 +156,13 @@ class SkillProgressionTracker:
     def _parse_json(self, raw: str) -> dict[str, Any]:
         text = (raw or "").strip()
         if text.startswith("```"):
-            text = text.split("```", 2)[1]
-            text = text.removeprefix("json")
-            text = text.rsplit("```", 1)[0]
-        return json.loads(text.strip())
+            text = text.split("```", 2)[1].removeprefix("json")
+        parsed = json.loads(text.strip())
+        if not isinstance(parsed, dict):
+            raise ValueError("Roadmap response must be a JSON object.")
+        if not isinstance(parsed.get("phases"), list):
+            raise ValueError("Roadmap response must contain a phases array.")
+        return parsed
 
     def _fallback_roadmap(self, current_skills: list[str], target_role: str) -> dict[str, Any]:
         return {

@@ -1,9 +1,47 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-resume-analyzer:latest
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - .env
+    environment:
+      API_KEY: ${API_KEY:?Set API_KEY in .env before starting the backend}
+      # SQLite is the source of truth for this deployment.  The optional
+      # Postgres/Redis services were unused by the application and exposed
+      # default credentials when left in compose.
+      DATABASE_URL: ""
+      REDIS_URL: ""
+      CORS_ORIGINS: '["http://127.0.0.1:8501","http://localhost:8501"]'
+      CORS_ALLOW_CREDENTIALS: "false"
+      ALLOWED_FILE_ROOTS: '["data"]'
+      APPLICANT_PROFILE_PATH: data/applicant_profile.local.yaml
+      AUTOMATIC_APPLY: "false"
+      AUTOMATIC_SUBMIT: "false"
+    volumes:
+      - app_data:/app/data
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail -H \"X-API-Key: $${API_KEY}\" http://localhost:8000/api/v1/resume/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+
   dashboard:
     build:
       context: .
       dockerfile: Dockerfile
     image: ai-resume-analyzer:latest
-    container_name: ai-resume-dashboard
     command: >
       streamlit run app/dashboard/main.py
         --server.address 0.0.0.0
@@ -11,14 +49,53 @@
         --server.headless true
         --browser.gatherUsageStats false
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
     env_file:
       - .env
     environment:
+      API_KEY: ${API_KEY:?Set API_KEY in .env before starting the dashboard}
       FASTAPI_API_BASE: http://backend:8000
+      CORS_ORIGINS: '["http://127.0.0.1:8501","http://localhost:8501"]'
+    volumes:
+      - app_data:/app/data
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       backend:
         condition: service_healthy
-    volumes:
-      - ./data:/app/data
     restart: unless-stopped
+
+  # Optional autonomous worker.  It is opt-in and always defaults to
+  # prepare-only; enable it explicitly after configuring a local profile and
+  # reviewing the generated packages.
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-resume-analyzer:latest
+    profiles: ["agent"]
+    command: python run_job_agent.py --serve
+    env_file:
+      - .env
+    environment:
+      API_KEY: ${API_KEY:?Set API_KEY in .env before starting the agent}
+      DATABASE_URL: ""
+      REDIS_URL: ""
+      APPLICANT_PROFILE_PATH: data/applicant_profile.local.yaml
+      AUTOMATIC_APPLY: "false"
+      AUTOMATIC_SUBMIT: "false"
+    volumes:
+      - app_data:/app/data
+    user: "10001:10001"
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  app_data:

@@ -70,7 +70,7 @@ def main():
 
             latex = latex.replace(
                 "CANDIDATE_NAME_PLACEHOLDER",
-                "Muhammad Baqir",
+                "Example Candidate",
             )
 
             latex = latex.replace(
@@ -80,7 +80,7 @@ def main():
 
             latex = latex.replace(
                 "CANDIDATE_CONTACT_PLACEHOLDER",
-                "Bamberg, Germany | +49 152 17975480 | baqir@example.com",
+                "Example City, Germany | +49 152 00000000 | candidate@example.com",
             )
 
             latex = latex.replace(
@@ -90,7 +90,7 @@ def main():
 
             latex = latex.replace(
                 "GITHUB_URL_PLACEHOLDER",
-                "https://github.com/Baqir110",
+                "https://github.com/example-candidate",
             )
 
             latex = latex.replace(

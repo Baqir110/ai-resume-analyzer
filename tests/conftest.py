@@ -19,8 +19,15 @@ To run everything:
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
+
+# Keep tests independent of any developer's ignored live applicant profile.
+# The fixture contains only synthetic data and is safe for CI.
+os.environ["APPLICANT_PROFILE_PATH"] = str(
+    Path(__file__).resolve().parent / "fixtures" / "applicant_profile.yaml"
+)
 
 # Stub values that CI or example files might set. If we see one of these,
 # treat the key as absent — the real service would reject it.
@@ -37,14 +44,27 @@ _STUB_VALUES = {
 }
 
 
+def _live_integration_opt_in() -> bool:
+    return os.getenv("RUN_LIVE_INTEGRATION", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _has_real_gateway_key() -> bool:
-    """True only if a plausible (non-stub) gateway key is configured."""
+    """True only when live integration was explicitly opted into."""
+    if not _live_integration_opt_in():
+        return False
     key = os.getenv("EXPLABS_API_KEY", "").strip() or os.getenv("EXPERIENTIAL_ORG_KEY", "").strip()
     return bool(key) and key not in _STUB_VALUES
 
 
 def _has_any_real_provider_key() -> bool:
-    """True if any native provider key looks real."""
+    """True only when live integration was explicitly opted into."""
+    if not _live_integration_opt_in():
+        return False
     for env_name in (
         "GEMINI_API_KEY",
         "GROQ_API_KEY",
@@ -63,6 +83,26 @@ def _has_any_real_provider_key() -> bool:
 def has_real_key() -> bool:
     """Session-wide fixture: True if any real key is present."""
     return _has_real_gateway_key() or _has_any_real_provider_key()
+
+
+@pytest.fixture(autouse=True)
+def _override_api_auth_for_unit_tests():
+    """Keep hermetic unit tests independent of deployment credentials.
+
+    Production requests still go through the real API-key dependency. Tests
+    that exercise authentication explicitly remove this override first.
+    """
+
+    from app.core.security import require_api_key
+    from app.main import app
+
+    previous = app.dependency_overrides.get(require_api_key)
+    app.dependency_overrides[require_api_key] = lambda: None
+    yield
+    if previous is None:
+        app.dependency_overrides.pop(require_api_key, None)
+    else:
+        app.dependency_overrides[require_api_key] = previous
 
 
 def pytest_collection_modifyitems(config, items):

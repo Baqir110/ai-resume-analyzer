@@ -1,5 +1,6 @@
 """Modular dashboard components for Streamlit UI."""
 
+import html
 import queue
 import threading
 import time
@@ -92,7 +93,7 @@ def render_results_summary(result: dict[str, Any]) -> None:
                     f'<span style="background:#dcfce7;color:#166534;'
                     f"padding:3px 8px;border-radius:6px;margin:3px 4px 3px 0;"
                     f'display:inline-block;font-weight:600;font-size:0.85rem;">'
-                    f"{s}</span>"
+                    f"{html.escape(str(s))}</span>"
                     for s in matching
                 ),
                 unsafe_allow_html=True,
@@ -109,7 +110,7 @@ def render_results_summary(result: dict[str, Any]) -> None:
                     f'<span style="background:#fee2e2;color:#991b1b;'
                     f"padding:3px 8px;border-radius:6px;margin:3px 4px 3px 0;"
                     f'display:inline-block;font-weight:600;font-size:0.85rem;">'
-                    f"{s}</span>"
+                    f"{html.escape(str(s))}</span>"
                     for s in missing
                 ),
                 unsafe_allow_html=True,
@@ -215,6 +216,98 @@ def render_status_badge(meta: dict) -> None:
 # ============================================================
 
 
+# def render_provider_selector() -> tuple[str, str]:
+#     """Render LLM provider selector.
+
+#     Returns:
+#         Tuple of (route_mode, provider_or_model)
+#     """
+#     route_options = ["experiential", "direct"]
+#     route_labels = {"experiential": "Experiential Cloud", "direct": "Direct API"}
+
+#     selected_route = st.selectbox(
+#         "Routing Mode",
+#         route_options,
+#         format_func=lambda x: route_labels[x],
+#         key="provider_selector_route",
+#         help=(
+#             "Experiential Cloud routes through the managed gateway. "
+#             "Direct API calls the provider endpoint directly using your key."
+#         ),
+#     )
+
+
+def provider_choices() -> list[tuple[str, str]]:
+    """
+    Every selectable provider, as ``(canonical_name, label)``.
+
+    Built from the registry so the dashboard can never offer a provider the
+    router does not know, or hide one it does. The literal this replaced was
+    already out of date: it offered "anthropic", which the router only accepts
+    as an alias for "claude", and omitted four providers the application
+    supports.
+
+    A provider that is not configured is still listed, with the variable to set
+    in its label. Showing it is how a user discovers what to configure;
+    filtering it out would leave a UI that silently does not mention the option.
+
+    Never raises: a provider whose configuration cannot be read is shown as
+    unconfigured rather than removed, because removing it would silently change
+    the behaviour of an existing session.
+    """
+    try:
+        from app.services.llm.provider import LLMService, get_spec
+    except Exception:
+        # The dashboard must still render if the LLM layer cannot be imported.
+        return [("ollama", "Ollama \u2014 local")]
+
+    choices: list[tuple[str, str]] = []
+
+    for name in LLMService.SUPPORTED_PROVIDERS:
+        spec = get_spec(name)
+        if spec is None:
+            continue
+
+        where = "local" if spec.local else "cloud"
+
+        try:
+            configured = LLMService._provider_is_configured(name)
+        except Exception:
+            configured = False
+
+        if configured:
+            label = f"{name} \u2014 {where}"
+        else:
+            # Naming the variable to set beats a greyed-out entry.
+            missing = " or ".join(spec.key_env) if spec.key_env else spec.model_env
+            label = f"{name} \u2014 {where} (not configured: set {missing})"
+
+        choices.append((name, label))
+
+    return choices
+
+
+#     if selected_route == "experiential":
+#         model = st.selectbox(
+#             "Experiential Model",
+#             [
+#                 "gpt-5.6-luna",
+#                 "gpt-6-astra",
+#                 "deepseek-v4-flash",
+#                 "qwen3.8-27b",
+#                 "gemini-3.7-flash",
+#             ],
+#             key="provider_selector_experiential_model",
+#         )
+#         return selected_route, model
+#     else:
+#         provider = st.selectbox(
+#             "Provider",
+#             ["gemini", "openai", "anthropic", "groq", "deepseek"],
+#             format_func=lambda x: x.title(),
+#             key="provider_selector_direct_provider",
+#         )
+#         return selected_route, provider
 def render_provider_selector() -> tuple[str, str]:
     """Render LLM provider selector.
 
@@ -222,7 +315,11 @@ def render_provider_selector() -> tuple[str, str]:
         Tuple of (route_mode, provider_or_model)
     """
     route_options = ["experiential", "direct"]
-    route_labels = {"experiential": "Experiential Cloud", "direct": "Direct API"}
+
+    route_labels = {
+        "experiential": "Experiential Cloud",
+        "direct": "Direct API",
+    }
 
     selected_route = st.selectbox(
         "Routing Mode",
@@ -231,7 +328,7 @@ def render_provider_selector() -> tuple[str, str]:
         key="provider_selector_route",
         help=(
             "Experiential Cloud routes through the managed gateway. "
-            "Direct API calls the provider endpoint directly using your key."
+            "Direct API calls the provider endpoint directly."
         ),
     )
 
@@ -248,14 +345,29 @@ def render_provider_selector() -> tuple[str, str]:
             key="provider_selector_experiential_model",
         )
         return selected_route, model
-    else:
-        provider = st.selectbox(
-            "Provider",
-            ["gemini", "openai", "anthropic", "groq", "deepseek"],
-            format_func=lambda x: x.title(),
-            key="provider_selector_direct_provider",
-        )
-        return selected_route, provider
+
+    provider = st.selectbox(
+        "Provider",
+        [
+            "ollama",
+            "gemini",
+            "openai",
+            "anthropic",
+            "groq",
+            "deepseek",
+        ],
+        format_func=lambda x: {
+            "ollama": "Ollama — Local",
+            "gemini": "Google Gemini",
+            "openai": "OpenAI",
+            "anthropic": "Anthropic",
+            "groq": "Groq",
+            "deepseek": "DeepSeek",
+        }[x],
+        key="provider_selector_direct_provider",
+    )
+
+    return selected_route, provider
 
 
 # ============================================================
@@ -450,7 +562,7 @@ def render_backend_log_panel(api_base: str) -> None:
     import pandas as pd
     import requests
 
-    from app.dashboard.helpers import fetch_processing_log
+    from app.dashboard.helpers import fetch_processing_log, get_api_headers
 
     with st.expander("🛠️ Backend processing log", expanded=False):
         col1, col2 = st.columns([1, 4])
@@ -459,6 +571,7 @@ def render_backend_log_panel(api_base: str) -> None:
                 try:
                     r = requests.delete(
                         f"{api_base.rstrip('/')}/api/v1/resume/processing-log",
+                        headers=get_api_headers(),
                         timeout=10,
                     )
                     if r.status_code == 200:

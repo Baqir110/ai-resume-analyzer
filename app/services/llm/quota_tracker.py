@@ -168,7 +168,10 @@ def compute_provider_usage(
                 event_type = ev.get("event")
 
                 if event_type == "request_completed":
-                    tokens = int(ev.get("total_tokens", 0) or 0)
+                    try:
+                        tokens = max(0, int(ev.get("total_tokens", 0) or 0))
+                    except (TypeError, ValueError):
+                        tokens = 0
 
                     if ts >= cutoff_minute:
                         result["requests_last_minute"] += 1

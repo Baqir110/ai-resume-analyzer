@@ -134,7 +134,19 @@ def main() -> int:
         return 0
 
     for patch in patches:
-        p = ROOT / patch["file"]
+        raw_file = str(patch.get("file", ""))
+        p = (ROOT / raw_file).resolve()
+        try:
+            p.relative_to(ROOT.resolve())
+        except ValueError:
+            print(f"  ❌ Refusing path outside repository: {raw_file}")
+            continue
+        if p.name == ".env" or "data" in p.relative_to(ROOT.resolve()).parts:
+            print(f"  ❌ Refusing to patch runtime/secrets path: {raw_file}")
+            continue
+        if p.suffix not in {".py", ".toml", ".yaml", ".yml", ".json"}:
+            print(f"  ❌ Refusing unsupported patch file: {raw_file}")
+            continue
         if not p.exists():
             print(f"  ❌ {p} not found")
             continue

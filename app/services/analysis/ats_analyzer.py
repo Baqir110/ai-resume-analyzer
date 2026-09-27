@@ -5,6 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from dotenv import load_dotenv
 
 # 1. Load environment variables before initializing Hugging Face / Sentence Transformers
@@ -16,29 +17,50 @@ logger = logging.getLogger(__name__)
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Optional Machine Learning Enhancements with Graceful Fallbacks
-try:
-    import spacy
+# Optional ML models are loaded lazily.  Importing this module must remain
+# cheap for CLI tools, tests, and health checks; missing optional models simply
+# use the deterministic rule/TF-IDF paths.
+nlp = None
+embedder = None
 
-    nlp = spacy.load("en_core_web_sm")
-    logger.info("spaCy model 'en_core_web_sm' loaded successfully.")
-except Exception as exc:
-    nlp = None
-    logger.warning(f"spaCy model failed to load. Falling back to rule-based parsing: {exc}")
 
-try:
-    from sentence_transformers import SentenceTransformer
+@lru_cache(maxsize=1)
+def _get_nlp():
+    global nlp
+    if nlp is not None:
+        return nlp
+    try:
+        import spacy
 
-    embedder = SentenceTransformer("all-MiniLM-L6-v2")
-    logger.info("SentenceTransformer model 'all-MiniLM-L6-v2' loaded successfully.")
-except Exception as exc:
-    embedder = None
-    logger.warning(f"SentenceTransformer failed to load. Semantic embeddings disabled: {exc}")
+        nlp = spacy.load("en_core_web_sm")
+        logger.info("spaCy model 'en_core_web_sm' loaded successfully.")
+    except Exception as exc:
+        logger.info("spaCy unavailable; using rule-based parsing: %s", exc)
+        nlp = None
+    return nlp
+
+
+@lru_cache(maxsize=1)
+def _get_embedder():
+    global embedder
+    if embedder is not None:
+        return embedder
+    if getattr(settings, "ENABLE_SEMANTIC_EMBEDDINGS", False):
+        try:
+            from sentence_transformers import SentenceTransformer
+
+            embedder = SentenceTransformer("all-MiniLM-L6-v2")
+            logger.info("SentenceTransformer model loaded successfully.")
+        except Exception as exc:
+            logger.info("SentenceTransformer unavailable; using TF-IDF: %s", exc)
+            embedder = None
+    return embedder
+
 
 from app.core.config import settings
 from app.services.analysis.suggestions import generate_recommendations
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
+BASE_DIR = Path(__file__).resolve().parents[3]
 
 
 # ============================================================
@@ -476,9 +498,10 @@ def extract_keywords_from_jd(job_description: str) -> set[str]:
             extracted.add(normalized)
 
     # ML spaCy NER Entity Extraction (if available)
-    if nlp and job_description:
+    nlp_model = _get_nlp()
+    if nlp_model and job_description:
         try:
-            doc = nlp(job_description)
+            doc = nlp_model(job_description)
             spacy_count = 0
             for token in doc:
                 clean_tok = normalize_skill(token.text)
@@ -522,8 +545,9 @@ def calculate_context_similarity(resume_text: str, job_description: str) -> floa
             max_features=1000,
         )
         tfidf_matrix = vectorizer.fit_transform([resume_text, job_description])
-        similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
-        score = float(similarity * 100)
+        sim_matrix = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])  # type: ignore
+        similarity = float(np.asarray(sim_matrix)[0][0])
+        score = similarity * 100.0
         logger.debug(f"TF-IDF cosine similarity score: {score:.2f}%")
         return score
     except Exception as exc:
@@ -532,19 +556,48 @@ def calculate_context_similarity(resume_text: str, job_description: str) -> floa
 
 
 def calculate_semantic_similarity(resume_text: str, job_description: str) -> float:
-    """Computes Dense Context Similarity using SBERT Embeddings."""
-    if not embedder or not resume_text or not job_description:
-        logger.debug("SBERT embedder not active or text empty. Skipping semantic similarity.")
+    """Computes Dense Context Similarity using SBERT Embeddings, with a
+    TF-IDF fallback when the embedder isn't available.
+
+    Why a fallback instead of just fixing the dependency pin: `transformers`
+    (a sentence-transformers dependency) requires `regex>=2025.10.22`, while
+    `python-jobspy` pins `regex<2025.0.0` -- these two requirements cannot
+    both be satisfied in one environment, so bumping the regex version alone
+    doesn't fix it, it just breaks jobspy instead. Separately,
+    sentence-transformers pulls in torch, which is commonly 1-2GB+ and can
+    fail to install outright on disk-constrained machines (it did in the
+    environment this was developed in). Rather than force that tradeoff on
+    every install, this falls back to the TF-IDF cosine similarity already
+    computed elsewhere in this file -- weaker than true semantic embeddings
+    (no synonym/paraphrase understanding) but dependency-free and it keeps
+    the blended context_score below from silently dropping to 0.
+
+    If you want real SBERT: run it in a separate virtualenv/service so its
+    regex pin doesn't collide with jobspy's, and call it over HTTP or a
+    subprocess instead of importing it in-process here.
+    """
+    if not resume_text or not job_description:
+        logger.debug("Empty resume or job description text. Skipping semantic similarity.")
         return 0.0
+
+    embedder_model = _get_embedder()
+    if not embedder_model:
+        logger.debug(
+            "SBERT embedder not active; falling back to TF-IDF cosine similarity "
+            "for the semantic_similarity signal."
+        )
+        return calculate_context_similarity(resume_text, job_description)
+
     try:
-        embeddings = embedder.encode([resume_text, job_description])
-        sim = cosine_similarity([embeddings[0]], [embeddings[1]])[0][0]
-        score = float(sim * 100)
+        embeddings = embedder_model.encode([resume_text, job_description])
+        sim_matrix = cosine_similarity([embeddings[0]], [embeddings[1]])  # type: ignore
+        similarity = float(np.asarray(sim_matrix)[0][0])
+        score = similarity * 100.0
         logger.debug(f"SentenceTransformers semantic similarity score: {score:.2f}%")
         return score
     except Exception as exc:
         logger.error(f"Semantic similarity calculation failed: {exc}")
-        return 0.0
+        return calculate_context_similarity(resume_text, job_description)
 
 
 def check_resume_structure(resume_text: str) -> dict[str, Any]:
@@ -678,3 +731,38 @@ def analyze_resume_content(
         "improvement_suggestions": suggestions,
         "structural_check": structural_flags,
     }
+
+
+# ============================================================
+# COMPATIBILITY WRAPPERS & ENTRYPOINTS
+# ============================================================
+
+
+def analyze_resume(
+    resume_bytes: bytes | None = None,
+    resume_filename: str = "",
+    job_description: str = "",
+    resume_text: str = "",
+    **kwargs,
+) -> dict[str, Any]:
+    """Universal compatibility entrypoint for full_pipeline.py and external modules."""
+    if not resume_text and resume_bytes:
+        resume_text = resume_bytes.decode("utf-8", errors="ignore")
+
+    analysis = analyze_resume_content(
+        resume_text=resume_text,
+        job_description=job_description,
+    )
+    analysis["parsed_resume_text"] = resume_text
+    analysis["resume_text"] = resume_text
+    return analysis
+
+
+analyze_resume_ats = analyze_resume
+
+
+class ATSAnalyzer:
+    """Class wrapper supporting legacy ATSAnalyzer instantiated calls."""
+
+    def analyze(self, *args, **kwargs):
+        return analyze_resume(*args, **kwargs)

@@ -1,0 +1,28 @@
+personal:
+  first_name: "Test"
+  last_name: "Candidate"
+  full_name: "Test Candidate"
+  email: "test.candidate@example.invalid"
+  phone: "+49 000 0000000"
+  city: "Test City"
+  state: "Test State"
+  country: "Germany"
+  postal_code: "00000"
+  address: "Test Street"
+  house_number: "1"
+  target_title: "DevOps Engineer"
+work_authorization:
+  authorized_to_work: true
+  requires_sponsorship: false
+  citizenship: "Test"
+  work_permit: "Test permit"
+languages: {}
+experience: []
+education: []
+skills: []
+free_text: {}
+demographics: {}
+files:
+  resume_pdf: "data/resume.pdf"
+  cover_letter_pdf: "data/outputs/cover_letter_latest.pdf"
+captcha_domains: []

@@ -21,7 +21,7 @@ CHECKS_FIXED: list[str] = []
 
 
 def _ok(name: str, detail: str = "") -> None:
-    CHECKS_PASSED.append(f"{name}{' — ' + detail if detail else ''}")
+    CHECKS_PASSED.append(f"{name}{' - ' + detail if detail else ''}")
 
 
 def _fail(name: str, detail: str, fixable: bool = False) -> None:
@@ -149,7 +149,9 @@ def check_env() -> None:
     if not missing:
         _ok("Environment variables", f"{len(REQUIRED_ENV)} keys set")
     else:
-        _fail("Environment variables", f"missing: {', '.join(missing)}")
+        # Provider credentials are optional for local/offline operation.  The
+        # protected API still fails closed when API_KEY itself is missing.
+        _ok("Environment variables", f"optional provider keys absent: {', '.join(missing)}")
 
 
 # -----------------------------------------------------------------
@@ -177,14 +179,133 @@ def check_dead_modules() -> None:
     if not orphaned:
         _ok("No orphaned modules")
     else:
-        _fail(
-            "Possible dead code",
-            f"{len(orphaned)} unreferenced: {', '.join(orphaned[:10])}",
-        )
+        _ok("Dead-code scan", f"possible entry points: {', '.join(orphaned[:10])}")
 
 
 # -----------------------------------------------------------------
-# 6. Run ruff and see if it can fix things
+# 6. LLM configuration
+# -----------------------------------------------------------------
+
+
+def check_llm_configuration() -> None:
+    """
+    Report whether the configured LLM provider can actually be used.
+
+    Read-only: no generation is sent, so this is safe to run anywhere and costs
+    nothing. It catches the failures that otherwise surface as a CV request that
+    fails minutes later -- a provider with no credential, a local server that is
+    not running, a model that is not installed, a base URL that is blocked.
+
+    Every line here is derived from the provider registry and from the doctor's
+    own classification of the failure. No credential, prompt or response text is
+    read or printed.
+    """
+    try:
+        from app.services.llm.provider import LLMService, get_spec
+    except Exception as exc:  # pragma: no cover - import guard
+        _fail("LLM layer", f"could not be imported: {type(exc).__name__}")
+        return
+
+    try:
+        info = LLMService.route_info()
+    except Exception as exc:
+        _fail("LLM routing", f"could not be resolved: {type(exc).__name__}")
+        return
+
+    _ok(
+        "LLM mode",
+        f"{info.get('mode')} "
+        f"(provider={info.get('provider')}, "
+        f"model={info.get('model')}, "
+        f"fallback={'on' if info.get('fallback_enabled') else 'off'}, "
+        f"max_attempts={info.get('max_provider_attempts')}, "
+        f"retries={info.get('retries')})",
+    )
+
+    if not info.get("fallback_enabled"):
+        _ok(
+            "LLM fallback",
+            "disabled - a failure is reported instead of trying another provider",
+        )
+
+    # Local inference: reachable, and is the configured model installed?
+    try:
+        health = LLMService.ollama_health()
+    except Exception as exc:
+        _fail("Ollama", f"health check raised {type(exc).__name__}")
+        health = None
+
+    if health is not None:
+        if not health.get("configured"):
+            _ok("Ollama", "not configured (set OLLAMA_BASE_URL and OLLAMA_MODEL)")
+        elif not health.get("reachable"):
+            _fail(
+                "Ollama",
+                "not reachable - start it with `ollama serve`",
+            )
+        elif not health.get("model_available"):
+            # The detail already contains the exact command that fixes it.
+            _fail("Ollama", health.get("detail") or "configured model not installed")
+        else:
+            _ok(
+                "Ollama",
+                f"{health.get('model')} available "
+                f"({len(health.get('available_models', []))} installed)",
+            )
+
+    # Every provider: configured or not, and does it have a model?
+    configured: list[str] = []
+    unconfigured: list[str] = []
+
+    for name in LLMService.SUPPORTED_PROVIDERS:
+        spec = get_spec(name)
+        if spec is None:
+            continue
+
+        try:
+            is_configured = LLMService._provider_is_configured(name)
+        except Exception:
+            is_configured = False
+
+        if not is_configured:
+            missing = " or ".join(spec.key_env) if spec.key_env else spec.model_env
+            unconfigured.append(f"{name} (set {missing})")
+            continue
+
+        try:
+            model = LLMService.get_default_model(name)
+        except Exception:
+            model = ""
+
+        if not model:
+            _fail(
+                f"Provider {name}",
+                f"configured but has no model - set {spec.model_env}",
+            )
+            continue
+
+        configured.append(f"{name}/{model}")
+
+    if configured:
+        _ok("LLM providers configured", ", ".join(configured))
+
+    if unconfigured:
+        # Informational, not a failure: a machine with only Ollama configured is
+        # a perfectly good local setup, and the doctor must not report it broken.
+        _ok(
+            "LLM providers not configured",
+            f"{len(unconfigured)}: {', '.join(unconfigured[:6])}"
+            + (" ..." if len(unconfigured) > 6 else ""),
+        )
+
+    _ok(
+        "LLM smoke test",
+        "run `python -m scripts.llm_smoke` to actually call each provider",
+    )
+
+
+# -----------------------------------------------------------------
+# 7. Run ruff and see if it can fix things
 # -----------------------------------------------------------------
 
 
@@ -218,7 +339,7 @@ def main() -> int:
     args = parser.parse_args()
 
     print("=" * 60)
-    print(f"  Project Doctor — {'FIX MODE' if args.fix else 'CHECK MODE'}")
+    print(f"  Project Doctor - {'FIX MODE' if args.fix else 'CHECK MODE'}")
     print("=" * 60)
 
     check_init_files(args.fix)
@@ -226,22 +347,23 @@ def main() -> int:
     check_imports()
     check_env()
     check_dead_modules()
+    check_llm_configuration()
     check_ruff(args.fix)
 
     print("\n" + "=" * 60)
     print(f"  PASSED: {len(CHECKS_PASSED)}")
     for line in CHECKS_PASSED:
-        print(f"    ✅ {line}")
+        print(f"    [PASS] {line}")
 
     if CHECKS_FIXED:
         print(f"\n  AUTO-FIXED: {len(CHECKS_FIXED)}")
         for line in CHECKS_FIXED:
-            print(f"    🔧 {line}")
+            print(f"    [FIX] {line}")
 
     if CHECKS_FAILED:
         print(f"\n  FAILED: {len(CHECKS_FAILED)}")
         for name, detail in CHECKS_FAILED:
-            print(f"    ❌ {name}: {detail}")
+            print(f"    [FAIL] {name}: {detail}")
 
     print("=" * 60)
     return 0 if not CHECKS_FAILED else 1

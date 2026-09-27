@@ -1,3 +1,15 @@
+[project]
+name = "ai-resume-analyzer"
+version = "1.0.0"
+# 3.11 and 3.12 are the tested and deployed targets: CI runs the suite on both
+# and the Dockerfile is built on 3.12. 3.13 is allowed and the test suite passes
+# there, but python-jobspy 1.1.82 has no 3.13-compatible release, so its
+# requirements entry is marked `python_version < "3.13"` and the JobSpy discovery
+# source is unavailable on 3.13. The import is guarded, so the application
+# starts and every other feature works; only that one discovery source drops out.
+requires-python = ">=3.11,<3.14"
+description = "Local-first resume analysis and review-gated job application tooling"
+
 [tool.black]
 line-length = 100
 target-version = ["py311"]

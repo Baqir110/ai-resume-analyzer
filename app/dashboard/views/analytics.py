@@ -1,91 +1,78 @@
-"""Auto Apply — trigger Browser Use form filling from the dashboard."""
+"""Read-only analytics dashboard."""
+
+from __future__ import annotations
 
 import requests
 import streamlit as st
 
-API_BASE = "http://127.0.0.1:8000/api/v1"
+from app.dashboard.helpers import get_api_base, get_api_headers
 
 
-def render() -> None:
-    st.title("🎯 Auto Apply")
-    st.caption("AI fills the form in your Edge. You review. You click Submit.")
+def render_analytics_page() -> None:
+    """Render application, pipeline, and LLM usage analytics."""
 
-    with st.form("apply_form"):
-        job_url = st.text_input(
-            "Job URL",
-            placeholder="https://boards.greenhouse.io/acme/jobs/12345",
-        )
-        col1, col2 = st.columns(2)
-        with col1:
-            company = st.text_input("Company")
-            resume_path = st.text_input(
-                "Resume PDF path",
-                value="data/outputs/resume_latest.pdf",
-            )
-        with col2:
-            role = st.text_input("Role title")
-            cover_path = st.text_input("Cover letter PDF path (optional)", value="")
+    st.title("📈 Analytics")
+    st.caption("Aggregated, read-only metrics from the local tracking store.")
 
-        why = st.text_area(
-            "Why this company? (optional)",
-            height=100,
-            placeholder="Leave blank to let the agent skip this question.",
-        )
-
-        max_steps = st.slider("Max agent steps", 10, 60, 40)
-        headless = st.checkbox("Headless (ignored when attached to Edge via CDP)", value=False)
-
-        submitted = st.form_submit_button("Fill application")
-
-    if submitted and job_url:
-        with st.spinner("Agent is filling the form... this can take 60–120 seconds."):
-            try:
-                resp = requests.post(
-                    f"{API_BASE}/jobs/apply",
-                    json={
-                        "job_url": job_url,
-                        "resume_path": resume_path,
-                        "cover_letter_path": cover_path or None,
-                        "why_this_company": why,
-                        "company_name": company,
-                        "role_title": role,
-                        "max_steps": max_steps,
-                        "headless": headless,
-                    },
-                    timeout=600,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-
-                if data.get("captcha_encountered"):
-                    st.error("CAPTCHA encountered. Solve it manually in Edge, " "then re-run.")
-                elif data.get("success"):
-                    st.success(
-                        f"Form filled in {data['steps_taken']} steps. "
-                        "Review the Edge tab and click Submit yourself."
-                    )
-                else:
-                    st.warning(data.get("error_message", "Unknown failure."))
-
-                with st.expander("Agent step log", expanded=False):
-                    for line in data.get("history_summary", []):
-                        st.text(line)
-
-            except requests.HTTPError as e:
-                st.error(f"API error {e.response.status_code}: " f"{e.response.text[:500]}")
-            except requests.RequestException as e:
-                st.error(f"Request failed: {e}")
-
-    st.divider()
-    st.subheader("Recent applications")
-
+    api_base = get_api_base()
+    period = st.selectbox("Time period", ["7d", "30d", "90d", "all"], index=1)
     try:
-        resp = requests.get(f"{API_BASE}/jobs/applications?limit=20", timeout=10)
-        if resp.ok:
-            rows = resp.json().get("applications", [])
-            if rows:
-                st.dataframe(rows, use_container_width=True)
-            else:
-                st.info("No applications yet.")
-    except requests.RequestException:
-        st.info("Could not load applications log.")
+        response = requests.get(
+            f"{api_base}/api/v1/resume/analytics/summary",
+            params={"period": period},
+            headers=get_api_headers(),
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json().get("data", {})
+    except requests.RequestException as exc:
+        st.warning(f"Could not load analytics: {exc}")
+        return
+
+    applications = payload.get("applications", {}) or {}
+    llm = payload.get("llm", {}) or {}
+    pipeline = payload.get("pipeline", {}) or {}
+    skills = payload.get("skills", {}) or {}
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Applications", applications.get("total", 0))
+    c2.metric("LLM calls", llm.get("total_calls", 0))
+    c3.metric("Tokens", f"{int(llm.get('total_tokens', 0)):,}")
+    c4.metric("Estimated cost", f"${float(llm.get('total_cost_usd', 0)):.4f}")
+
+    st.subheader("Applications by status")
+    by_status = applications.get("by_status", {}) or {}
+    if by_status:
+        st.bar_chart(dict(sorted(by_status.items())))
+    else:
+        st.info("No application records in this period.")
+
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Top missing skills")
+        missing = skills.get("top_missing", []) or []
+        st.dataframe(missing, use_container_width=True) if missing else st.info(
+            "No skill gaps recorded."
+        )
+    with right:
+        st.subheader("Top matched skills")
+        matched = skills.get("top_matched", []) or []
+        st.dataframe(matched, use_container_width=True) if matched else st.info(
+            "No matches recorded."
+        )
+
+    st.subheader("Pipeline operations")
+    if pipeline:
+        st.json(pipeline)
+    else:
+        st.info("No pipeline events in this period.")
+
+    errors = payload.get("recent_errors", []) or []
+    if errors:
+        st.subheader("Recent errors")
+        st.dataframe(errors, use_container_width=True)
+
+
+# Keep the generic name available for callers that used the old view module.
+def render() -> None:
+    render_analytics_page()

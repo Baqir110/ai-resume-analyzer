@@ -5,14 +5,15 @@ import json
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from app.core.event_log import log_event, new_request_id, set_request_id
+from app.core.security import require_api_key
 from app.services.analysis.ats_analyzer import analyze_resume_content
 from app.services.parsing.resume_parser import extract_text_from_file
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_api_key)])
 
 
 class StreamingAnalyzer:
@@ -124,7 +125,7 @@ class StreamingAnalyzer:
                 {
                     "stage": "error",
                     "status": "failed",
-                    "error": str(e),
+                    "error": "Streaming analysis failed",
                 }
             )
 

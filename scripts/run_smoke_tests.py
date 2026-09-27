@@ -1,15 +1,33 @@
 """Smoke test — hits every endpoint and reports pass/fail."""
 
+import os
 from pathlib import Path
 
 import requests
 
-BASE = "http://localhost:8000/api/v1/resume"
-FIXTURES = Path(__file__).parent / "fixtures"
+if os.getenv("RUN_LIVE_SMOKE", "false").strip().lower() not in {"1", "true", "yes", "on"}:
+    print("Smoke tests are opt-in. Set RUN_LIVE_SMOKE=true to run live provider calls.")
+    raise SystemExit(2)
+
+BASE = os.getenv("SMOKE_BASE_URL", "http://127.0.0.1:8000/api/v1/resume").rstrip("/")
+HEADERS = {}
+_api_key = os.getenv("API_KEY", "").strip()
+if _api_key:
+    HEADERS["X-API-Key"] = _api_key
+ROOT = Path(__file__).resolve().parents[1]
+FIXTURES = ROOT / "tests" / "fixtures"
 RESUME = FIXTURES / "resume.txt"
 JD = FIXTURES / "jd.txt"
 
 results = []
+
+
+def get(url, **kwargs):
+    return requests.get(url, headers=HEADERS, **kwargs)
+
+
+def post(url, **kwargs):
+    return requests.post(url, headers=HEADERS, **kwargs)
 
 
 def check(name, response, expect_keys=None):
@@ -32,22 +50,22 @@ def check(name, response, expect_keys=None):
 
 
 # 1. Health
-check("health", requests.get(f"{BASE}/health"), ["ok"])
-check("backend-status", requests.get(f"{BASE}/backend-status"), ["providers"])
-check("model-catalog", requests.get(f"{BASE}/model-catalog"), ["models"])
-check("usage-summary", requests.get(f"{BASE}/usage-summary"), ["summary"])
-check("quota-status", requests.get(f"{BASE}/quota-status"), ["providers"])
-check("processing-log", requests.get(f"{BASE}/processing-log"), ["logs"])
-check("analytics-summary", requests.get(f"{BASE}/analytics/summary"), ["data"])
-check("career-options", requests.get(f"{BASE}/career-options"), ["cover_letter_templates"])
-check("tracker-list", requests.get(f"{BASE}/tracker/applications"), ["applications"])
+check("health", get(f"{BASE}/health"), ["ok"])
+check("backend-status", get(f"{BASE}/backend-status"), ["providers"])
+check("model-catalog", get(f"{BASE}/model-catalog"), ["models"])
+check("usage-summary", get(f"{BASE}/usage-summary"), ["summary"])
+check("quota-status", get(f"{BASE}/quota-status"), ["providers"])
+check("processing-log", get(f"{BASE}/processing-log"), ["logs"])
+check("analytics-summary", get(f"{BASE}/analytics/summary"), ["data"])
+check("career-options", get(f"{BASE}/career-options"), ["cover_letter_templates"])
+check("tracker-list", get(f"{BASE}/tracker/applications"), ["applications"])
 
 # 2. Analyze
 jd = JD.read_text()
 with open(RESUME, "rb") as f:
     check(
         "analyze",
-        requests.post(
+        post(
             f"{BASE}/analyze",
             data={"job_description": jd},
             files={"resume_file": ("r.txt", f, "text/plain")},
@@ -60,7 +78,7 @@ with open(RESUME, "rb") as f:
 with open(RESUME, "rb") as f:
     check(
         "score-breakdown",
-        requests.post(
+        post(
             f"{BASE}/score-breakdown",
             data={"job_description": jd},
             files={"resume_file": ("r.txt", f, "text/plain")},
@@ -72,7 +90,7 @@ with open(RESUME, "rb") as f:
 # 4. Market insights
 check(
     "market-insights",
-    requests.get(
+    get(
         f"{BASE}/market-insights",
         params={"role": "Platform Engineer", "location": "Berlin", "seniority": "senior"},
         timeout=60,
@@ -83,7 +101,7 @@ check(
 # 5. Skill roadmap
 check(
     "skill-roadmap",
-    requests.post(
+    post(
         f"{BASE}/skill-roadmap",
         data={"current_skills": '["python"]', "target_role": "MLOps", "months_available": 6},
         timeout=120,
@@ -95,7 +113,7 @@ check(
 with open(RESUME, "rb") as f:
     check(
         "check-authenticity",
-        requests.post(
+        post(
             f"{BASE}/check-authenticity",
             files={"resume_file": ("r.txt", f, "text/plain")},
             timeout=120,
@@ -107,7 +125,7 @@ with open(RESUME, "rb") as f:
 with open(RESUME, "rb") as f:
     check(
         "audit-matrix",
-        requests.post(
+        post(
             f"{BASE}/audit-matrix",
             data={"job_description": jd},
             files={"resume_file": ("r.txt", f, "text/plain")},
@@ -120,7 +138,7 @@ with open(RESUME, "rb") as f:
 with open(RESUME, "rb") as f:
     check(
         "cover-letter",
-        requests.post(
+        post(
             f"{BASE}/generate-cover-letter",
             data={"job_description": jd, "company_name": "Acme"},
             files={"resume_file": ("r.txt", f, "text/plain")},
@@ -133,7 +151,7 @@ with open(RESUME, "rb") as f:
 with open(RESUME, "rb") as f:
     check(
         "interview-prep",
-        requests.post(
+        post(
             f"{BASE}/interview-prep",
             data={"job_description": jd, "family": "technical"},
             files={"resume_file": ("r.txt", f, "text/plain")},
@@ -146,7 +164,7 @@ with open(RESUME, "rb") as f:
 with open(RESUME, "rb") as f:
     check(
         "linkedin-optimize",
-        requests.post(
+        post(
             f"{BASE}/linkedin-optimize",
             files={"resume_file": ("r.txt", f, "text/plain")},
             timeout=120,
@@ -157,7 +175,7 @@ with open(RESUME, "rb") as f:
 # 11. Diff preview
 check(
     "diff-preview",
-    requests.post(
+    post(
         f"{BASE}/diff-preview",
         json={"original_bullets": ["a"], "optimized_bullets": ["b"]},
     ),
@@ -166,7 +184,7 @@ check(
 
 # 12. DOCX generation
 with open(RESUME, "rb") as f:
-    r = requests.post(
+    r = post(
         f"{BASE}/generate-full",
         data={"job_description": jd},
         files={"resume_file": ("r.txt", f, "text/plain")},

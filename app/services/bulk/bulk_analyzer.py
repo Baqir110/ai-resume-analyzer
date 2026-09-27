@@ -48,10 +48,15 @@ class BulkAnalyzerService:
         """
         Executes parallel analysis across uploaded CV files and ranks results.
         """
-        tasks = [
-            cls.analyze_single_cv(content, filename, job_description) for content, filename in files
-        ]
+        if len(files) > 20:
+            raise ValueError("A maximum of 20 resumes can be analyzed at once")
+        semaphore = asyncio.Semaphore(4)
 
+        async def bounded(content: bytes, filename: str) -> dict[str, Any]:
+            async with semaphore:
+                return await cls.analyze_single_cv(content, filename, job_description)
+
+        tasks = [bounded(content, filename) for content, filename in files]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         valid_results = []

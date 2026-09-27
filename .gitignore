@@ -1,31 +1,35 @@
 # ==============================================================================
-# Python Build & Bytecode
+# Environment variables and secrets
+# ==============================================================================
+# .env holds real provider keys and is never committed. .env.* is ignored so a
+# stray .env.local or .env.production cannot slip in either; the example is
+# explicitly allowed back, since it is the documented template and holds no
+# real values.
+.env
+.env.*
+!.env.example
+
+# ==============================================================================
+# Python bytecode and build output
 # ==============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
 sdist/
-var/
 wheels/
-share/python-wheels/
 *.egg-info/
-.installed.cfg
 *.egg
+.eggs/
+.installed.cfg
 MANIFEST
 
 # ==============================================================================
-# Virtual Environments
+# Virtual environments
 # ==============================================================================
 .venv/
 venv/
@@ -34,30 +38,26 @@ ENV/
 env.bak/
 venv.bak/
 .python-version
-# ==============================================================================
-# Testing & Coverage
-# ==============================================================================
-.pytest_cache/
-.cache/
-.coverage
-.coverage.*
-htmlcov/
-.tox/
-.nox/
-.hypothesis/
-*.cover
 
 # ==============================================================================
-# Linters & Type Checkers
+# Test, lint and type-checker caches
 # ==============================================================================
+.pytest_cache/
+.ruff_cache/
 .mypy_cache/
 .dmypy.json
 dmypy.json
-.ruff_cache/
-.pyre/
+.cache/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+*.cover
+htmlcov/
 
 # ==============================================================================
-# IDEs & System Files
+# Editors, IDEs and operating-system files
 # ==============================================================================
 .vscode/
 .idea/
@@ -69,60 +69,11 @@ Thumbs.db
 desktop.ini
 
 # ==============================================================================
-# Environment Variables & Secrets
+# Logs and LaTeX by-products
 # ==============================================================================
-.env
-.env.*
-!.env.example
-
-# ==============================================================================
-# Data & Runtime Artifacts
-# ==============================================================================
-# Processing log (grows on every run)
-data/llm_processing.jsonl
-
-# Databases
-data/applications.db
-data/*.db
-data/*.db-journal
-data/*.sqlite
-
-# Generated Files & Outputs
-data/*.pdf
-data/*.docx
-data/*.tex
-data/*.txt
-outputs/
-exports/
-uploads/
-*.tmp
-
-# ==============================================================================
-# Backups & Patch Scripts
-# ==============================================================================
-app_backup_*/
-app_backup_*
-cleanup_backup_*/
-*.bak_*
-*.bak
-*_backup.py
-*.orig
-auto_fixing_dashboard.py
-patch_*.py
-fix_*.py
-restructur*_project.py
-
-# ==============================================================================
-# AI Assistants & Tool Workspaces
-# ==============================================================================
-.agents/
-.claude/
-.agent/
-.ai/
-
-# ==============================================================================
-# Logs & LaTeX Artifacts
-# ==============================================================================
+# pdflatex writes these next to the .tex it compiles. The compiler runs in a
+# private temporary directory, so in practice these only appear when a document
+# is compiled by hand at the repository root.
 *.log
 *.aux
 *.fdb_latexmk
@@ -131,22 +82,81 @@ restructur*_project.py
 *.synctex.gz
 *.toc
 
-# Shell redirection mistakes
+# ==============================================================================
+# Generated CV and PDF artifacts from local runs
+# ==============================================================================
+test_cv.pdf
+test_cv.tex
+test_cv_output/
+outputs/
+exports/
+uploads/
+generated/
+artifacts/
+*.tmp
+
+# ==============================================================================
+# Runtime data
+# ==============================================================================
+# Everything below is created by the application on first use. The databases are
+# created with CREATE TABLE IF NOT EXISTS, so nothing is lost by not tracking
+# them, and a tracked SQLite file would otherwise carry one machine's local
+# state -- and potentially a real applicant's data -- into every clone.
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+data/*.sqlite
+app/data/
+
+# Append-only run logs. These grow without bound and are rebuilt on each run.
+data/*.jsonl
+data/agent_events.local.jsonl
+data/job_applications.jsonl
+data/llm_processing.jsonl
+
+# Generated subdirectories.
+data/generated/
+data/screenshots/
+data/browser_profiles/
+
+# A checked-in example profile lives at data/applicant_profile.yaml. A live one
+# carries the applicant's personal details, so local variants are never tracked.
+data/applicant_profile.local.yaml
+
+# ==============================================================================
+# Backups, patch scripts and abandoned implementations
+# ==============================================================================
+app_backup_*/
+app_backup_*
+cleanup_backup_*/
+*_backup.py
+*.bak
+*.bak_*
+*.orig
+*.rej
+auto_fixing_dashboard.py
+patch_*.py
+fix_*.py
+restructur*_project.py
+
+# ==============================================================================
+# Assistant tool workspaces
+# ==============================================================================
+# Configuration for third-party AI tooling, not project documentation.
+.agents/
+.claude/
+.agent/
+.ai/
+
+# ==============================================================================
+# Stray shell redirection
+# ==============================================================================
+# These are literal file names created by a mistyped redirect, e.g.
+# `grep pattern file >dict`.
 /dict
 /int
 /str
-/Path
 /list[dict]
 /Optional[datetime]
 /python3
-# Runtime data
-app/data/llm_processing.jsonl
-data/llm_processing.jsonl
-data/*.db
-app/data/*.db
-# Runtime data
-app/data/llm_processing.jsonl
-app/data/*.db
-# Local browser automation profiles / caches
-data/browser_profiles/
-data/browser_profiles/

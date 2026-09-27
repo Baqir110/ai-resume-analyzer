@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 _CACHE_TTL = timedelta(hours=1)
 _CACHE: dict[str, dict[str, Any]] = {}
+_MAX_CACHE_ENTRIES = 256
 
 
 _SYSTEM_PROMPT = """You are a labor-market analyst. Given a job role, location,
@@ -74,33 +75,27 @@ class MarketInsightsEngine:
         role: str,
         location: str,
         seniority: str = "mid",
-        provider: str = "experiential",
-        route_mode: str = "experiential",
+        provider: str | None = None,
+        route_mode: str | None = None,
     ) -> dict[str, Any]:
         role = (role or "").strip()
         location = (location or "").strip()
         seniority = (seniority or "mid").strip().lower()
 
-        if not role or not location:
+        if not role or not location or len(role) > 200 or len(location) > 200:
             return {
                 "error": "role and location are required",
                 "last_updated": datetime.now(timezone.utc).isoformat(),
             }
 
-        cache_key = f"{role.lower()}|{location.lower()}|{seniority}"
+        cache_key = json.dumps([role.lower(), location.lower(), seniority])
         cached = _CACHE.get(cache_key)
         if cached and (datetime.now(timezone.utc) - cached["_cached_at"]) < self.cache_ttl:
             return {**cached, "cached": True}
 
         prompt = (
-            f"Role: {role}\n"
-            f"Location: {location}\n"
-            f"Seniority: {seniority}\n\n"
-            "Produce the JSON described in the system prompt. "
-            "Include EVERY field. Do not omit any."
+            f"{_SYSTEM_PROMPT}\n\n" f"Role: {role}\nLocation: {location}\nSeniority: {seniority}\n"
         )
-
-        raw = ""
         try:
             raw = await asyncio.to_thread(
                 LLMService.generate,
@@ -108,59 +103,47 @@ class MarketInsightsEngine:
                 provider=provider,
                 route_mode=route_mode,
             )
-            logger.info(
-                "market_insights raw response (first 800): %s",
-                (raw or "")[:800],
-            )
             insights = self._parse_json(raw)
-        except Exception as exc:
-            logger.warning("market_insights LLM call failed: %s", exc)
+        except Exception:
+            logger.exception("market_insights LLM call failed")
             insights = self._fallback_insights(role, location, seniority)
-            insights["_error"] = str(exc)[:200]
+            insights["_error"] = "provider_unavailable"
 
-        # Validate required fields — fill missing pieces from fallback
-        required = ("salary_range", "top_skills", "summary")
-        missing = [f for f in required if not insights.get(f)]
-        if missing:
-            logger.warning(
-                "market_insights: LLM response missing fields %s — filling from fallback",
-                missing,
-            )
-            fallback = self._fallback_insights(role, location, seniority)
-            for key, value in fallback.items():
-                insights.setdefault(key, value)
-
+        fallback = self._fallback_insights(role, location, seniority)
+        for key, value in fallback.items():
+            if insights.get(key) is None:
+                insights[key] = value
         insights.setdefault("role", role)
         insights.setdefault("location", location)
         insights.setdefault("seniority", seniority)
         insights["last_updated"] = datetime.now(timezone.utc).isoformat()
         insights["_cached_at"] = datetime.now(timezone.utc)
-        insights["data_sources"] = ["AI-estimated (LLM)"]
-
-        _CACHE[cache_key] = insights
+        insights["data_sources"] = [] if "_error" in insights else ["AI-estimated (LLM)"]
+        # A provider outage must not remain cached after the provider recovers.
+        if "_error" not in insights:
+            if len(_CACHE) >= _MAX_CACHE_ENTRIES:
+                _CACHE.pop(next(iter(_CACHE)), None)
+            _CACHE[cache_key] = insights
         return {**insights, "cached": False}
 
     def _parse_json(self, raw: str) -> dict[str, Any]:
         text = (raw or "").strip()
-        if not text:
-            raise ValueError("empty LLM response")
-
-        # Strip markdown fences if present
         if text.startswith("```"):
-            parts = text.split("```")
-            if len(parts) >= 2:
-                text = parts[1]
-                text = text.removeprefix("json")
-                text = text.strip()
-
-        # If the LLM wrapped the JSON in prose, find the first '{' and last '}'
-        if not text.startswith("{"):
-            start = text.find("{")
-            end = text.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                text = text[start : end + 1]
-
-        return json.loads(text.strip())
+            text = text.split("```", 2)[1].removeprefix("json").strip()
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            start, end = text.find("{"), text.rfind("}")
+            if start < 0 or end <= start:
+                raise ValueError("Market response must be a JSON object.") from None
+            parsed = json.loads(text[start : end + 1])
+        if not isinstance(parsed, dict):
+            raise ValueError("Market response must be a JSON object.")
+        if not isinstance(parsed.get("salary_range"), dict) or not isinstance(
+            parsed.get("top_skills"), list
+        ):
+            raise ValueError("Market response has invalid salary_range or top_skills fields.")
+        return parsed
 
     def _fallback_insights(self, role: str, location: str, seniority: str) -> dict[str, Any]:
         return {

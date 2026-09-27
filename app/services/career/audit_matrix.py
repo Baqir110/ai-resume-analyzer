@@ -34,23 +34,24 @@ class AuditMatrixService:
         basic_analysis = analyze_resume_content(resume_text, job_description)
         matching_skills = basic_analysis.get("matching_skills", [])
 
-        jd_words = set(re.findall(r"\b[a-zA-Z-]+\b", job_description.lower()))
-        resume_words = set(re.findall(r"\b[a-zA-Z-]+\b", resume_text.lower()))
+        def contains_skill(text: str, skill: str) -> bool:
+            words = re.split(r"[\s-]+", skill)
+            phrase = r"[\s-]+".join(re.escape(word) for word in words)
+            return re.search(r"(?<!\w)" + phrase + r"(?!\w)", text, re.IGNORECASE) is not None
 
-        matched_soft = list(
-            cls.SOFT_SKILLS_TAXONOMY.intersection(jd_words).intersection(resume_words)
+        required_soft = {
+            skill for skill in cls.SOFT_SKILLS_TAXONOMY if contains_skill(job_description, skill)
+        }
+        matched_soft = sorted(
+            skill for skill in required_soft if contains_skill(resume_text, skill)
         )
-        missing_soft = list(cls.SOFT_SKILLS_TAXONOMY.intersection(jd_words) - resume_words)
+        missing_soft = sorted(required_soft - set(matched_soft))
 
-        soft_score = (
-            int((len(matched_soft) / max(1, len(matched_soft) + len(missing_soft))) * 100)
-            if (matched_soft or missing_soft)
-            else 80
-        )
+        soft_score = int(len(matched_soft) / len(required_soft) * 100) if required_soft else 80
 
         # 2. Measurable Impact Check (Percentages, numbers, currency, metrics)
         metric_patterns = [
-            r"\b\d+%\b",  # 30%
+            r"\b\d+(?:[.,]\d+)?\s*%(?!\w)",  # 30%, 12.5%, 12,5 %
             r"\$\d+(?:,\d+)*(?:\.\d+)?\b",  # $50,000
             r"\b\d+\s*(?:ms|s|sec|min|hrs|x|k|m|b)\b",  # 200ms, 5x, 10k
             r"\b(?:increased|decreased|reduced|improved|grew|saved)\s+[^.\n]*?\b\d+\b",  # reduced latency by 40
