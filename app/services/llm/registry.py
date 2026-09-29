@@ -361,9 +361,10 @@ _register(
         key_env=("GEMINI_API_KEY", "GOOGLE_API_KEY"),
         max_tokens_env="GEMINI_MAX_TOKENS",
         default_max_tokens=2048,
-        # The google-genai response has no OpenAI-style usage block, so the
-        # model list is not read from a /models endpoint here.
-        discoverable=False,
+        # The google-genai response has no OpenAI-style usage block, but we can
+        # still report the configured model. Set discoverable=True so the
+        # model appears in the discovery endpoint.
+        discoverable=True,
         aliases=("google",),
     )
 )

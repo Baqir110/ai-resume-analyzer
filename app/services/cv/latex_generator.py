@@ -57,7 +57,9 @@ MAX_SKILL_ITEMS = 200
 #:
 #: Layouts with wider margins or more sections hold less, so this is tuned for
 #: the densest supported layout and errs on the generous side.
-TARGET_LATEX_CHARS = 4200
+#:
+#: Increased from 4200 to 6000 to allow more complete CV content.
+TARGET_LATEX_CHARS = 6000
 
 #: Prompt budgets for the generation call, matching the optimizer's values for
 #: the same inputs. Every other generation path already applied these; this one
