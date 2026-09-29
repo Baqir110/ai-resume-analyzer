@@ -400,6 +400,14 @@ def _render(page: str, **session) -> AppTest:
     return app
 
 
+def _reference_pdf() -> bytes:
+    """A real, readable one-page PDF, for exercising the preview stage."""
+    sys.path.insert(0, str(Path(APP).resolve().parents[1] / "tests"))
+    from test_ats_scoring_helpers import minimal_pdf
+
+    return minimal_pdf()
+
+
 def _visible_text(app: AppTest) -> str:
     """
     Everything the page actually rendered, as one string.
@@ -511,10 +519,14 @@ def test_pre_existing_page_still_renders(stub_backend, page):
 
 def test_every_navigation_target_resolves(stub_backend):
     """
-    The navigation and the dispatcher must agree.
+    Every navigation entry must have a dispatch branch.
 
-    A key in the sidebar with no branch in the dispatcher is a dead button, and
-    a branch with no key is a page nobody can reach.
+    A sidebar button with no branch is a dead button, and that is the failure
+    worth catching. The reverse is deliberately *not* required to match: the six
+    workflow stages are sections of the single CV workflow page, so their keys
+    still dispatch -- for a deep link to one stage, and so a stage opened alone
+    renders as its own page -- without being navigation entries of their own.
+    Asserting exact equality would forbid a legitimate deep-link target.
     """
     import ast
 
@@ -545,8 +557,6 @@ def test_every_navigation_target_resolves(stub_backend):
                 if isinstance(comparator, ast.Constant) and isinstance(comparator.value, str):
                     dispatch_keys.add(comparator.value)
 
-    # The if/elif chain's first branch is spelled `page == "..."`; every branch
-    # is a Compare, so the sets should line up exactly.
     assert nav_keys, "no navigation entries found"
     assert dispatch_keys, "no dispatch branches found"
 
@@ -555,16 +565,15 @@ def test_every_navigation_target_resolves(stub_backend):
         not missing_dispatch
     ), f"navigation targets with no dispatch branch: {sorted(missing_dispatch)}"
 
-    unreachable = dispatch_keys - nav_keys
-    assert not unreachable, f"dispatch branches with no navigation entry: {sorted(unreachable)}"
-
 
 def test_navigation_covers_the_required_workflow():
     """
-    The task's required pages, by name.
+    The workflow is reachable, and it is one page.
 
-    Asserted against the parsed navigation rather than a screenshot, so a page
-    cannot be renamed out of the workflow without this failing.
+    The six stages are sections of a single page rather than six navigation
+    entries, so this asserts the *page* that runs them plus the setup pages, and
+    separately asserts that every stage is still dispatchable on its own. A stage
+    could otherwise be dropped from the page and nothing here would notice.
     """
     import ast
 
@@ -582,17 +591,231 @@ def test_navigation_covers_the_required_workflow():
 
     for required in (
         "overview",
+        "cv_workflow",
+        "llm_settings",
+        "layout_picker",
+        "diagnostics",
+    ):
+        assert required in keys, f"missing page: {required}"
+
+
+def test_every_workflow_stage_is_reachable():
+    """
+    Each of the six stages still renders, as a deep link.
+
+    They are sections of one page now, so nothing in the navigation points at
+    them individually. This keeps them individually addressable, which is what
+    lets an old bookmark or a link from another page still land somewhere
+    sensible.
+    """
+    import ast
+
+    tree = ast.parse(Path(APP).read_text(encoding="utf-8"))
+    dispatch: set[str] = set()
+
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Compare)
+            and isinstance(node.left, ast.Name)
+            and node.left.id == "page"
+        ):
+            for comparator in node.comparators:
+                if isinstance(comparator, ast.Constant) and isinstance(comparator.value, str):
+                    dispatch.add(comparator.value)
+
+    for stage in (
         "resume",
         "job_input",
         "ats_analysis",
         "optimization",
         "cv_generator",
         "pdf_preview",
-        "llm_settings",
-        "layout_picker",
-        "diagnostics",
     ):
-        assert required in keys, f"missing page: {required}"
+        assert stage in dispatch, f"stage no longer reachable: {stage}"
+
+
+def test_the_workflow_page_renders_every_stage(stub_backend):
+    """
+    One page carries all six stages.
+
+    A stage that quietly stopped rendering would leave the page working and
+    incomplete, and no other test would see it: the stage pages are only reached
+    by deep link now.
+    """
+    app = _render("cv_workflow")
+
+    assert not app.exception, [f"{type(e.value).__name__}: {e.value}" for e in app.exception]
+
+    # Every stage's own controls appear without the user navigating anywhere.
+    labels = " ".join(
+        str(getattr(el, "label", "") or getattr(el, "body", ""))
+        for el in [*app.file_uploader, *app.text_area, *app.button, *app.tabs]
+    ).casefold()
+    for marker in ("upload resume", "job description"):
+        assert marker in labels, f"stage control missing from the single page: {marker}"
+
+
+@pytest.mark.parametrize(
+    "state_name, session",
+    [
+        ("empty", {}),
+        (
+            "resume only",
+            {
+                workflow.KEY_UPLOAD: (
+                    "cv.pdf",
+                    b"%PDF-1.4\n% resume bytes\n",
+                    "application/pdf",
+                )
+            },
+        ),
+        (
+            "resume and posting",
+            {
+                workflow.KEY_UPLOAD: (
+                    "cv.pdf",
+                    b"%PDF-1.4\n% resume bytes\n",
+                    "application/pdf",
+                ),
+                workflow.KEY_JOB: "We need a Python engineer with Docker experience.",
+            },
+        ),
+        (
+            "with an analysis",
+            {
+                workflow.KEY_UPLOAD: (
+                    "cv.txt",
+                    b"Jane Doe\njane@example.com\n\nEXPERIENCE\nEngineer\n",
+                    "text/plain",
+                ),
+                workflow.KEY_JOB: "We need a Python engineer with Docker experience.",
+                workflow.KEY_ANALYSIS: {
+                    "status": "success",
+                    "ats_match_score": 72.0,
+                    "ats_breakdown": {
+                        "ats_score": 72.0,
+                        "band": "Moderate match",
+                        "pre_generation": True,
+                        "categories": {},
+                        "improvement_areas": [{"category": "keyword_match", "points_lost": 5.0}],
+                    },
+                    "ats_suggestions": [
+                        {
+                            "issue": "Some words are missing.",
+                            "action": "Add what you have used.",
+                            "severity": "medium",
+                        }
+                    ],
+                    "layout_recommendation": {
+                        "recommended_layout": "international_ats",
+                        "recommended_name": "International ATS",
+                        "reason": "Single column, strong parsing.",
+                        "ats_safety": "Very High",
+                    },
+                    "matching_skills": ["Python"],
+                    "missing_skills": ["Kubernetes"],
+                    "improvement_suggestions": [],
+                    "resume_text": "Jane Doe",
+                },
+            },
+        ),
+        (
+            "with a generated PDF",
+            {
+                workflow.KEY_UPLOAD: (
+                    "cv.txt",
+                    b"Jane Doe\njane@example.com\n\nEXPERIENCE\nEngineer\n",
+                    "text/plain",
+                ),
+                workflow.KEY_JOB: "We need a Python engineer.",
+                workflow.KEY_ANALYSIS: {"status": "success", "ats_match_score": 80.0},
+                "_result_pdf": {
+                    "content": _reference_pdf(),
+                    "filename": "cv.pdf",
+                    "elapsed": 1.0,
+                },
+                "_result_pdf_validation": {
+                    "valid": True,
+                    "status": "ok",
+                    "pages": 1,
+                    "text_chars": 900,
+                    "sections_found": ["experience", "education", "skills"],
+                    "problems": [],
+                    "detail": "1 page, 900 characters, no problems found.",
+                },
+                "_result_final_ats": {
+                    "ats_score": 88.0,
+                    "band": "Good match",
+                    "summary": "Everything evidenced.",
+                    "document": {"valid": True, "pages": 1, "problems": []},
+                    "layout": {
+                        "requested": "international_ats",
+                        "known": True,
+                        "name": "International ATS",
+                        "ats_safety": "Very High",
+                        "ats_safety_score": 95,
+                        "structure": "single_column",
+                        "parsing_risk": "Very Low",
+                    },
+                    "pdf_parsing": {
+                        "measured": True,
+                        "score": 100.0,
+                        "checks": [],
+                        "failed_checks": [],
+                        "issues": [],
+                    },
+                    "ats_issues": 0,
+                    "breakdown": {"categories": {}},
+                },
+                "_result_improvement_result": {
+                    "initial_score": 72.0,
+                    "final_score": 85.0,
+                    "total_improvement": 13.0,
+                    "target_score": 100.0,
+                    "explanation": "Improved where it was safe to do so.",
+                },
+            },
+        ),
+    ],
+)
+def test_the_workflow_page_survives_every_stage_of_the_flow(stub_backend, state_name, session):
+    """
+    The single page must render at every point in the flow, not just at the start.
+
+    The stages have always assumed they are the only thing on the page, so a
+    guard that returns early on the standalone page no longer returns when
+    rendered inline, and the code after it runs against data that is not there.
+    That failure only appears at the state where the data is missing -- so each
+    point in the flow is rendered separately here.
+    """
+    app = _render("cv_workflow", **session)
+
+    assert not app.exception, (
+        f"the workflow page broke with {state_name} state: "
+        f"{[f'{type(e.value).__name__}: {e.value}' for e in app.exception]}"
+    )
+
+
+def test_every_workflow_stage_is_reachable_standalone(stub_backend):
+    """
+    A stage opened on its own still renders as a page.
+
+    Deep links to a single stage still work, and they show the full page
+    treatment rather than the inline form.
+    """
+    for page in (
+        "resume",
+        "job_input",
+        "ats_analysis",
+        "optimization",
+        "cv_generator",
+        "pdf_preview",
+    ):
+        app = _render(page)
+        assert not app.exception, (
+            f"stage {page} raised: "
+            f"{[f'{type(e.value).__name__}: {e.value}' for e in app.exception]}"
+        )
 
 
 # ===========================================================================

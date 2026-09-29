@@ -62,24 +62,16 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = _env(name).lower()
+def _env_float(name: str, default: float) -> float:
+    """
+    Read a float setting, falling back on anything unparseable.
 
-    if not value:
-        return default
-
-    return value in {
-        "1",
-        "true",
-        "yes",
-        "y",
-        "on",
-    }
-
-
-def _env_int(name: str, default: int) -> int:
+    A typo in a numeric setting should not take down a request, so this behaves
+    like :func:`_env_int`: an unparseable value yields the default rather than
+    raising at the point of use.
+    """
     try:
-        return int(_env(name, str(default)))
+        return float(_env(name, str(default)))
     except (TypeError, ValueError):
         return default
 
@@ -1637,21 +1629,38 @@ LLM_ERROR_CONFIGURATION = "configuration"
 LLM_ERROR_UNKNOWN = "unknown"
 
 
-#: Order matters: the first matching pattern wins, so the more specific
-#: "insufficient_credits" must precede the broader "rate_limit", and both must
-#: precede the generic status-code checks.
+#: Order matters: the first matching pattern wins.
+#:
+#: "insufficient_credits" precedes "rate_limit" because a provider that says the
+#: balance is exhausted should stop rather than back off -- but its markers are
+#: phrases that *state* an exhausted balance, not words that merely appear near
+#: a billing link. Both precede the generic status-code checks, and the status
+#: code is consulted ahead of this table by ``classify_llm_error`` whenever the
+#: exception carries one.
 _ERROR_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         LLM_ERROR_CREDITS,
         (
+            # Each of these states that the balance is the problem, rather than
+            # mentioning billing in passing. "billing" on its own used to be here
+            # and it matched the upgrade link in Groq's rate-limit body, so a
+            # retryable 429 was classified as an exhausted balance: not retried,
+            # and reported with the wrong remedy.
             "insufficient_credits",
             "insufficient credits",
             "insufficient_quota",
+            "insufficient quota",
             "insufficient balance",
+            "insufficient funds",
             "credit balance is too low",
+            "credits exhausted",
+            "exceeded your current quota",
+            "quota exceeded for",
             "payment required",
-            "billing",
-            "402",
+            "payment_required",
+            # A 402 is authoritative from the status code, which is consulted
+            # before this list. As a bare substring it matched request ids and
+            # token counts, which is a worse source of truth than the status.
         ),
     ),
     (
@@ -1700,12 +1709,18 @@ _ERROR_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
         (
             "rate limit",
             "rate_limit",
+            "rate_limit_exceeded",
             "too many requests",
             "quota exceeded",
             "quota_exceeded",
             "resource exhausted",
             "resource_exhausted",
             "try again later",
+            "please try again in",
+            "tokens per minute",
+            "requests per minute",
+            "tpm",
+            "rpm",
             "429",
         ),
     ),
@@ -1799,6 +1814,94 @@ _STATUS_CATEGORIES: dict[int, str] = {
     503: LLM_ERROR_SERVER,
     504: LLM_ERROR_TIMEOUT,
 }
+
+
+#: How long to wait at most for a rate-limited provider, in seconds.
+#:
+#: Read live from the environment so an operator with a small token bucket can
+#: shorten it and one with a generous quota need not pay for it. The default is
+#: short because the common case is a per-minute bucket that refills well inside
+#: ten seconds, and a longer default would turn a rate limit into a hang.
+LLM_RATE_LIMIT_BACKOFF_SECONDS = 10.0
+
+#: Phrases providers use to say when their window reopens. Deliberately narrow:
+#: these must state a duration, because a bare "try again" with no number gives
+#: nothing to wait for.
+_RETRY_AFTER_PHRASES = (
+    re.compile(r"try again in\s+([\d.]+)\s*s", re.IGNORECASE),
+    re.compile(r"retry in\s+([\d.]+)\s*s", re.IGNORECASE),
+    re.compile(r"retry_after[\"']?\s*[:=]\s*[\"']?([\d.]+)", re.IGNORECASE),
+    re.compile(r"try again in\s+([\d.]+)\s*ms", re.IGNORECASE),
+)
+
+
+def rate_limit_retry_after(exc: BaseException) -> float | None:
+    """
+    How long the provider asked us to wait, in seconds, or ``None``.
+
+    Three sources, in order of authority:
+
+    1. an explicit ``retry_after_seconds`` attribute, for a client that surfaces
+       the parsed value;
+    2. an HTTP ``Retry-After`` header, which is seconds or an HTTP date;
+    3. a duration in the message body, which is what an OpenAI-compatible error
+       envelope actually carries.
+
+    Only the ``rate_limit`` category is worth asking. Returns ``None`` rather
+    than a guess when the provider says nothing useful, so the caller can fall
+    back to its own short backoff instead of inventing a delay.
+    """
+    if classify_llm_error(exc) != LLM_ERROR_RATE_LIMIT:
+        return None
+
+    for attribute in ("retry_after_seconds", "retry_after", "retry_delay"):
+        value = getattr(exc, attribute, None)
+        if isinstance(value, (int, float)) and value > 0:
+            return float(value)
+
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+
+    if headers is not None:
+        try:
+            raw = headers.get("Retry-After") or headers.get("retry-after")
+        except Exception:
+            raw = None
+        if raw:
+            text = str(raw).strip()
+            if text.isdigit():
+                return float(text)
+            # An HTTP-date form; the caller only needs an upper bound, and the
+            # wall clock is close enough for a rate limit.
+            try:
+                from datetime import datetime, timezone
+                from email.utils import parsedate_to_datetime
+
+                when = parsedate_to_datetime(text)
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+                delta = (when - datetime.now(timezone.utc)).total_seconds()
+                return max(0.0, delta)
+            except Exception:
+                pass
+
+    message = _safe_error(exc)
+
+    for pattern in _RETRY_AFTER_PHRASES:
+        match = pattern.search(message)
+        if not match:
+            continue
+        try:
+            value = float(match.group(1))
+        except (TypeError, ValueError):
+            continue
+        # The millisecond phrasing matched first on "in 5.895s" too, so a value
+        # under one is read as seconds rather than silently scaled: providers
+        # state seconds far more often, and a sub-second wait is the fallback's
+        # job anyway.
+        return value if value > 0 else None
+
+    return None
 
 
 def classify_llm_error(
@@ -2061,7 +2164,7 @@ class LLMService:
 
     #: Retained copy of the most recent usage. generate() consumes the
     #: contextvar, so without this a caller reporting on a finished request --
-    #: the smoke test, the doctor, an endpoint -- would always see zeros.
+    #: the smoke test, an endpoint -- would always see zeros.
     _last_usage_retained: dict[str, Any] = {}
 
     _model_latencies: dict[tuple[str, str], float] = {
@@ -2549,9 +2652,9 @@ class LLMService:
         """
         Turn a failure into a short, redaction-safe line for an operator.
 
-        Used by the smoke test and the doctor, which both need to explain a
-        failure without printing the exception verbatim: an upstream error body
-        can echo the request, and the request here is a prompt.
+        Used by the smoke test and the reporting endpoints, which both need to
+        explain a failure without printing the exception verbatim: an upstream
+        error body can echo the request, and the request here is a prompt.
         """
         category = classify_llm_error(exc, provider)
         detail = _safe_error(exc)
@@ -3019,10 +3122,31 @@ class LLMService:
         cls,
         provider: str,
         model: str,
+        retry_after: float | None = None,
     ) -> None:
+        """
+        Take a provider out of rotation.
+
+        ``retry_after`` is the duration the provider itself stated, in seconds,
+        and is only honoured for a rate limit. A token bucket that reopens in six
+        seconds must not cause a ten-minute blackout, which is what a flat
+        cooldown did: the provider answered, the router declined to call it, and
+        the emergency pass failed on a healthy provider.
+
+        The value is clamped to the backoff ceiling and floored at a second, so a
+        quoted duration can neither stall a request nor round to nothing. With no
+        duration, the flat cooldown applies -- for a 500 or a connection reset
+        there is nothing to read, and the previous default is the right one.
+        """
+        seconds = cls._cooldown_seconds
+
+        if retry_after is not None and retry_after > 0:
+            ceiling = _env_float("LLM_RATE_LIMIT_BACKOFF_SECONDS", LLM_RATE_LIMIT_BACKOFF_SECONDS)
+            seconds = max(1.0, min(retry_after, max(ceiling, 1.0)))
+
         with cls._state_lock:
             cls._exhausted_models[(provider, model)] = datetime.now(timezone.utc) + timedelta(
-                seconds=cls._cooldown_seconds
+                seconds=seconds
             )
 
     @classmethod
@@ -3052,6 +3176,22 @@ class LLMService:
                 return False
 
             return True
+
+    @classmethod
+    def _shortest_exhaustion_remaining(cls) -> float:
+        """
+        Seconds until the first cooldown expires, or ``inf`` when none is set.
+
+        ``inf`` rather than a large number so the caller's cap decides: a caller
+        that waits only when the answer is small will simply not wait here.
+        """
+        with cls._state_lock:
+            if not cls._exhausted_models:
+                return float("inf")
+            soonest = min(cls._exhausted_models.values())
+
+        remaining = (soonest - datetime.now(timezone.utc)).total_seconds()
+        return max(0.0, remaining)
 
     @classmethod
     def _select_candidates(
@@ -4063,6 +4203,24 @@ class LLMService:
         # If every candidate is temporarily exhausted, perform one
         # emergency pass instead of failing immediately.
         if not selected_candidates:
+            # Every candidate is in a cooldown. If the shortest one expires soon
+            # -- which it will when the cooldown came from a rate limit that
+            # stated its own duration -- waiting it out is the difference between
+            # a served request and a failed one. Capped, so a long cooldown means
+            # "skip", not "hang".
+            remaining = cls._shortest_exhaustion_remaining()
+            ceiling = _env_float("LLM_RATE_LIMIT_BACKOFF_SECONDS", LLM_RATE_LIMIT_BACKOFF_SECONDS)
+            wait = min(remaining, max(0.0, ceiling))
+
+            if wait > 0:
+                logger.info(
+                    "Every candidate is cooling down; waiting %.1s before the "
+                    "emergency pass (cap %.1fs).",
+                    wait,
+                    ceiling,
+                )
+                time.sleep(wait)
+
             logger.warning(
                 "All LLM candidates are temporarily exhausted; " "performing emergency retry pass."
             )
@@ -4255,15 +4413,23 @@ class LLMService:
                 # would repeat identically on every retry, so it is recorded
                 # once and the router moves on instead of hammering the
                 # provider -- the 429 insufficient_credits loop this replaces.
+                # A rate limit states its own duration, so the cooldown is set
+                # from that rather than from the flat default.
+                stated_retry_after = (
+                    rate_limit_retry_after(exc) if category == LLM_ERROR_RATE_LIMIT else None
+                )
+
                 if retryable:
                     cls._mark_exhausted(
                         candidate_provider,
                         candidate_model,
+                        stated_retry_after,
                     )
                 elif category in _TERMINAL_CATEGORIES:
                     cls._mark_exhausted(
                         candidate_provider,
                         candidate_model,
+                        stated_retry_after,
                     )
 
                 _write_log(

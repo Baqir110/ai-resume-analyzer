@@ -14,6 +14,8 @@ same code that would judge it, rather than by a string comparison in the UI.
 *Avoids duplicate calls.* Regenerating costs a full model call, so the button is
 explicit and the previous result is kept until a new one replaces it. Nothing
 here re-runs the analysis to obtain data it already has.
+
+New: Shows the ATS improvement loop results with before/after comparison.
 """
 
 from __future__ import annotations
@@ -32,7 +34,12 @@ from app.dashboard.components import (
     run_with_progress,
     store_result,
 )
-from app.dashboard.helpers import clear_cached_status, get_api_base, make_api_request_verbose
+from app.dashboard.helpers import (
+    clear_cached_status,
+    get_api_base,
+    make_api_request_verbose,
+    run_improvement_loop,
+)
 
 
 def _suggestions() -> list[str]:
@@ -95,6 +102,113 @@ def _render_request_preview() -> None:
         )
 
 
+def _run_improvement_loop(api_base: str) -> None:
+    """Run the loop and store its result."""
+    upload = workflow.get_upload()
+    job_desc = workflow.get_job().strip()
+    if not upload or not job_desc:
+        return
+
+    clear_result("improvement_result")
+    with st.spinner("Checking what can be improved\u2026"):
+        response, meta = run_improvement_loop(api_base, upload, job_desc)
+
+    if response is None or not (200 <= response.status_code < 300):
+        detail = meta.get("error") if isinstance(meta, dict) else "the request failed"
+        st.warning(f"Could not run the improvement check: {detail}")
+        return
+
+    store_result("improvement_result", response.json().get("result") or {})
+    st.rerun()
+
+
+def _render_improvement_loop(api_base: str) -> None:
+    """
+    Show what the loop found, and what it could not fix.
+
+    The loop's own result is rendered, not a reconstruction of it. Two reasons:
+    the page cannot know whether the loop actually made a change, and the safety
+    claim it displays — that nothing was invented — is only true if the text
+    being described is the text the loop produced.
+    """
+    analysis = workflow.get_analysis() or {}
+    if not analysis.get("ats_suggestions") and not analysis.get("ats_breakdown"):
+        return
+
+    theme.section_header("What can be improved", "\U0001f504")
+
+    result = get_result("improvement_result")
+
+    if not result:
+        st.caption(
+            "This runs a local check \u2014 no model call, no cost, and it makes no "
+            "changes to your CV. It reports what could be improved and what cannot."
+        )
+        if st.button("\U0001f504 Check what can be improved", key="opt_run_loop"):
+            _run_improvement_loop(api_base)
+        return
+
+    initial = result.get("initial_score")
+    final = result.get("final_score")
+    improved = result.get("total_improvement") or 0.0
+    target = result.get("target_score")
+
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        theme.value_card(
+            "Before",
+            f"{initial:.0f}/100" if isinstance(initial, (int, float)) else "\u2014",
+            "your CV as written",
+        )
+    with m2:
+        theme.value_card(
+            "After",
+            f"{final:.0f}/100" if isinstance(final, (int, float)) else "\u2014",
+            "safe changes only",
+        )
+    with m3:
+        theme.value_card(
+            "Change",
+            f"{improved:+.1f}" if improved else "0.0",
+            "target was " + (f"{target:.0f}" if isinstance(target, (int, float)) else "100"),
+        )
+
+    explanation = result.get("explanation") or ""
+    if explanation:
+        st.caption(explanation)
+
+    if not result.get("improvement_possible"):
+        st.info(
+            "No change was made. The remaining gaps need skills, qualifications or "
+            "experience that your CV does not contain, and the system will not add "
+            "them \u2014 they would be found out at the interview.",
+            icon="\U0001f6e1\ufe0f",
+        )
+
+    steps = result.get("steps") or []
+    if steps:
+        theme.section_header("Suggested changes", "\U0001f4dd")
+        for step in steps:
+            if step.get("is_unfillable_gap"):
+                st.markdown(f"- \U0001f534 {step.get('user_message', step.get('description', ''))}")
+            else:
+                with st.expander(f"\U0001f7e1 {step.get('description', '')}", expanded=False):
+                    st.markdown(f"**What to do:** {step.get('action', '')}")
+
+    suggestions = result.get("suggestions") or []
+    if suggestions:
+        with st.expander("Everything the check found", expanded=False):
+            for suggestion in suggestions:
+                st.markdown(f"- **{suggestion.get('issue', '')}**")
+                st.caption(f"  {suggestion.get('action', '')}")
+
+    st.caption(
+        "The system improves how your CV is presented and how well it answers this "
+        "posting. It never invents experience, technologies, certifications or "
+        "employers \u2014 a skill you do not have is reported as a gap, not added."
+    )
+
+
 def _render_diff() -> None:
     """Word-level before/after, computed by the backend."""
     diff_data = get_result("optimization_diff")
@@ -133,27 +247,25 @@ def _compare(original: str, optimised: str) -> None:
         )
 
 
-def render_optimization_page() -> None:
+def render_optimization_page(*, compact: bool = False) -> None:
     """Render the CV optimisation page."""
-    theme.step_header(
+    workflow.section_header(
         "✏",
         "CV Optimisation",
         "Review the gaps, then tailor the CV to this posting.",
+        compact=compact,
     )
 
     api_base = get_api_base()
 
-    if not workflow.has_analysis():
-        theme.empty_state(
-            "No analysis yet",
-            "Optimisation works from the gaps the ATS analysis found. Run it "
-            "first — the missing-skill list is the input here.",
-            action="Open ATS Analysis",
-            icon="🔍",
-        )
-        if st.button("← Run the ATS analysis"):
-            st.session_state[workflow.KEY_PAGE] = "ats_analysis"
-            st.rerun()
+    if workflow.blocked(
+        workflow.has_analysis(),
+        missing="an ATS analysis (step 3)",
+        action="the ATS analysis",
+        page="ats_analysis",
+        icon="🔍",
+        compact=compact,
+    ):
         return
 
     _render_request_preview()
@@ -162,6 +274,10 @@ def render_optimization_page() -> None:
     if not workflow.has_upload() or not workflow.get_job().strip():
         theme.pills([(theme.NOT_TESTED, "a resume and a job description are required")])
         return
+
+    # Show what the improvement loop found
+    _render_improvement_loop(api_base)
+    theme.rule()
 
     action_col, _ = st.columns([1, 3])
     with action_col:

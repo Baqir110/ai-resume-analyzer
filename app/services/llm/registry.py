@@ -87,7 +87,8 @@ class ProviderSpec:
         api_key_header: How the credential is sent. OpenAI-shaped providers use
             ``Authorization: Bearer``; Anthropic uses ``x-api-key``. Leaving
             this at the default keeps every existing provider working.
-        notes: Human-readable note surfaced by the doctor and smoke test.
+        notes: Human-readable note surfaced by the smoke test and the
+            ``/model-discovery`` endpoint.
     """
 
     name: str

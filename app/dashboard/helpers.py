@@ -311,6 +311,64 @@ def validate_pdf(api_base: str, pdf_bytes: bytes, filename: str = "cv.pdf"):
     )
 
 
+def validate_ats(
+    api_base: str,
+    pdf_bytes: bytes,
+    job_description: str,
+    expected_text: str = "",
+    layout: str = "",
+    filename: str = "cv.pdf",
+):
+    """
+    Score a generated CV with document readability actually measured.
+
+    The pre-generation analysis cannot score the PDF, because there is no document
+    yet. This sends the finished file so the backend can run the same analysis
+    with the PDF Parsing check switched on — which is what makes the final number
+    comparable to the first one rather than a different scale.
+
+    Server-side for the same reason as :func:`validate_pdf`: the layout checks
+    live next to the code that produced the document.
+    """
+    data: dict[str, str] = {"job_description": job_description}
+    if expected_text:
+        data["expected_text"] = expected_text
+    if layout:
+        data["layout"] = layout
+    return make_api_request_verbose(
+        f"{api_base}/api/v1/resume/validate-ats",
+        data=data,
+        files={"pdf_file": (filename, pdf_bytes, "application/pdf")},
+        timeout=90,
+    )
+
+
+def run_improvement_loop(
+    api_base: str,
+    resume_file: tuple[str, bytes, str],
+    job_description: str,
+    target_score: float = 100.0,
+):
+    """
+    Ask the backend to run the improvement loop.
+
+    Deterministic and local: the loop scores, identifies gaps, applies only
+    presentation changes, and re-scores. It makes no model call, so running it is
+    cheap and there is no reason to defer it — but it is a separate request rather
+    than part of the analysis, because it is a distinct thing the user asked for.
+    """
+    filename, payload, mime = resume_file
+    return make_api_request_verbose(
+        f"{api_base}/api/v1/resume/improvement-loop",
+        data={
+            "job_description": job_description,
+            "target_score": str(target_score),
+        },
+        files={"resume_file": (filename, payload, mime)},
+        timeout=60,
+    )
+
+
 def _get_json(url: str, *, timeout: int) -> dict | None:
     """
     GET a JSON document, returning None on any failure.

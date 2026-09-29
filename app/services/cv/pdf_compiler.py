@@ -891,7 +891,12 @@ def _validate_body_links(body: str) -> None:
         if parsed is None:
             raise LaTeXSourceError("LaTeX body contains an invalid link command.")
         url = _unwrap_detokenize(parsed[0])
-        if url:
+        # \relax is LaTeX's "no link", not a URL. The project-header branch below
+        # already exempts it; without the same exemption here, a document whose
+        # only defect was an unusable URL would be refused by the very validator
+        # that rescued it. It cannot carry an injection: it is a control sequence
+        # the templates already emit.
+        if url and url.casefold() != r"\relax":
             sanitize_latex_url(url)
 
     for match in re.finditer(r"\\projheader(?![A-Za-z@])", body, re.IGNORECASE):
@@ -1008,6 +1013,144 @@ _MIN_REMAINING_BUDGET_SECONDS = 8.0
 def _compaction_time_remains(deadline: float) -> bool:
     """True when another compilation pass could plausibly complete."""
     return (deadline - time.monotonic()) > _MIN_REMAINING_BUDGET_SECONDS
+
+
+#: A4 in PostScript points. Used to turn an absolute text position into a
+#: fraction of the page.
+_PAGE_HEIGHT_PT = 841.89
+
+#: Below this much empty space at the foot of the page, the document is left
+#: alone. A CV that ends 10% up the page has a normal bottom margin; one that
+#: ends a third of the way up does not.
+FILL_GAP_THRESHOLD = 0.18
+
+#: Where an expanded document should end up, as a fraction of the page.
+FILL_TARGET_GAP = 0.06
+
+#: The most the leading is ever multiplied by.
+#:
+#: 1.35 is the point where 11pt text on 13.2pt leading starts to look loose
+#: rather than airy. Past that, a better answer is a longer CV, and a CV is
+#: exactly what the candidate controls.
+FILL_MAX_FACTOR = 1.35
+
+#: Where the ``\linespread`` is inserted, matching the compaction levels.
+_FILL_ANCHOR = "\\begin{document}"
+
+
+def measured_fill_gap(pdf_bytes: bytes) -> float | None:
+    """
+    How much of the page height is empty below the lowest text, as a fraction.
+
+    ``None`` when the positions cannot be read, which is treated as "leave it
+    alone" rather than as "expand": a measurement failure is not evidence that a
+    document is short.
+
+    The page origin is bottom-left, so the *lowest* baseline is the smallest y.
+    Whatever sits below it -- the bottom margin, normally around 2cm -- is not
+    emptiness, so the margin is subtracted before the figure is compared with the
+    threshold. Without that, every document looks like it has a 7% gap and the
+    pass would engage for the wrong reason.
+    """
+    import io
+
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(pdf_bytes), strict=False)
+    except Exception:
+        return None
+
+    positions: list[float] = []
+
+    for page in reader.pages:
+
+        def visitor(text, cm, tm, font_dict, font_size, chunk=None):
+            if text and text.strip():
+                positions.append(float(tm[5]) + float(cm[5]))
+
+        try:
+            page.extract_text(visitor_text=visitor)
+        except Exception:
+            return None
+
+    if not positions:
+        return None
+
+    lowest = min(positions)
+    if lowest < 0 or lowest > _PAGE_HEIGHT_PT:
+        return None
+
+    # A standard 2cm bottom margin, so "empty" means empty rather than "not yet
+    # at the margin".
+    margin_pt = 56.7
+    gap_pt = max(0.0, lowest - margin_pt)
+
+    return gap_pt / _PAGE_HEIGHT_PT
+
+
+def _expand_layout(latex_code: str, factor: float) -> str:
+    """
+    Multiply the leading by ``factor``.
+
+    Deliberately the same mechanism the compaction levels use, so expansion and
+    compaction are two ends of one dial rather than two unrelated mechanisms that
+    can fight: whichever runs last decides the leading, and the fill pass only
+    ever runs on a document that already fits.
+    """
+    if factor <= 1.0:
+        return latex_code
+
+    rounded = round(factor, 3)
+    directive = f"\\linespread{{{rounded}}}\\selectfont"
+
+    # A document that already carries a line spread -- a compacted one -- has its
+    # value replaced rather than having a second one stacked on top, which LaTeX
+    # would ignore in favour of the first.
+    # The replacement is a function, not a string. re.sub parses a string
+    # replacement as a template, and a LaTeX directive begins with a backslash,
+    # which is an invalid group reference there -- so a plain string replacement
+    # raises instead of matching. A function's return value is used literally,
+    # which is what a LaTeX command needs.
+    if "\\linespread" in latex_code:
+        return re.sub(
+            r"\\linespread\{[\d.]+\}\\selectfont",
+            lambda _match: directive,
+            latex_code,
+            count=1,
+        )
+
+    if _FILL_ANCHOR not in latex_code:
+        return latex_code
+
+    return latex_code.replace(_FILL_ANCHOR, f"{_FILL_ANCHOR}\n{directive}", 1)
+
+
+def _fill_factor_for(gap: float) -> float:
+    """
+    The leading multiplier that would close ``gap`` down to the target.
+
+    Returns ``1.0`` -- meaning "leave it alone" -- when the gap is already small
+    or the required factor exceeds the cap.
+    """
+    if gap is None or gap <= FILL_GAP_THRESHOLD:
+        return 1.0
+
+    # The occupied fraction is what has to grow; the factor is applied to
+    # leading, which scales the occupied height, so the two are the same ratio
+    # once the fixed margins are accounted for.
+    occupied = 1.0 - gap
+    if occupied <= 0:
+        return 1.0
+
+    wanted = (1.0 - FILL_TARGET_GAP) / occupied
+    if wanted >= FILL_MAX_FACTOR:
+        # Too short to reach the target within the cap. Expand as far as is
+        # allowed rather than not at all: a partial improvement is still an
+        # improvement, and the cap is what keeps it from looking loose.
+        return FILL_MAX_FACTOR
+
+    return round(max(1.0, wanted), 3)
 
 
 def _compact_layout(latex_code: str) -> str:
@@ -1304,6 +1447,91 @@ def _make_private_temp_directory(prefix: str) -> tempfile.TemporaryDirectory:
     return directory
 
 
+def _fill_page(
+    pdf_bytes: bytes,
+    latex_code: str,
+    pdflatex: str,
+    workdir: Path,
+    deadline: float,
+) -> bytes:
+    """
+    Open up the leading of a document that stops far too high on the page.
+
+    Only ever called for a document already known to be exactly one page. The
+    original is returned whenever anything about the fill cannot be established
+    or the expanded attempt does not fit, so this can cost a compile and cannot
+    cost a document.
+    """
+    gap = measured_fill_gap(pdf_bytes)
+    factor = _fill_factor_for(gap)
+
+    if factor <= 1.0:
+        return pdf_bytes
+
+    # Enough budget left for the extra pass, or leave it: a timeout here would
+    # replace a good PDF with an error, which is the opposite of the intent.
+    if not _compaction_time_remains(deadline):
+        logger.debug(
+            "Document leaves %.0f%% of the page empty, but there is not enough "
+            "time left to open up the leading.",
+            gap * 100,
+        )
+        return pdf_bytes
+
+    expanded_source = _expand_layout(latex_code, factor)
+    if expanded_source == latex_code:
+        return pdf_bytes
+
+    logger.info(
+        "Document ends %.0f%% up an empty page; opening up the leading by %.2fx.",
+        gap * 100,
+        factor,
+    )
+
+    try:
+        expanded = _compile_attempt(
+            expanded_source,
+            pdflatex=pdflatex,
+            workdir=workdir,
+            deadline=deadline,
+        )
+    except (PDFLayoutError, LaTeXCompilationError, LaTeXSourceError) as exc:
+        # The guess was wrong, or the expansion produced something invalid. The
+        # unexpanded document is still correct, so it is what ships.
+        logger.info(
+            "Expanded leading did not compile to one page (%s); keeping the "
+            "unexpanded document.",
+            type(exc).__name__,
+        )
+        return pdf_bytes
+
+    if pdf_page_count(expanded) != 1:
+        logger.info(
+            "Expanded leading produced %d pages; keeping the unexpanded document.",
+            pdf_page_count(expanded),
+        )
+        return pdf_bytes
+
+    new_gap = measured_fill_gap(expanded)
+    if new_gap is not None and new_gap > gap:
+        # Opening the leading up made the page emptier, which can happen if the
+        # expansion pushed a heading onto its own line. Keep whichever is denser.
+        logger.info(
+            "Expanded leading left more space empty (%.0f%% vs %.0f%%); keeping "
+            "the unexpanded document.",
+            new_gap * 100,
+            gap * 100,
+        )
+        return pdf_bytes
+
+    logger.info(
+        "Trailing whitespace reduced from %.0f%% to %.0f%%.",
+        gap * 100,
+        (new_gap or 0.0) * 100,
+    )
+    return expanded
+
+
 def compile_single_page_pdf(latex_code: str) -> bytes:
     """Validate, compile, and require exactly one page without leaking logs."""
     validate_latex_document(latex_code)
@@ -1352,7 +1580,7 @@ def compile_single_page_pdf(latex_code: str) -> bytes:
             pages = pdf_page_count(pdf_bytes)
             last_pages = pages
             if pages == 1:
-                return pdf_bytes
+                return _fill_page(pdf_bytes, current_source, pdflatex, workdir, deadline)
             if final_attempt:
                 raise PDFLayoutError(
                     pages,

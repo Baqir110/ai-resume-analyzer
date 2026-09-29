@@ -9,10 +9,10 @@
 
 | Metric | Value |
 |--------|-------|
-| API endpoints | 46 |
-| Python files | 105 |
-| Lines of code | 37,648 |
-| Tests | 937 |
+| API endpoints | 50 |
+| Python files | 112 |
+| Lines of code | 45,047 |
+| Tests | 1296 |
 
 <!-- END:AUTO:STATS -->
 
@@ -62,7 +62,11 @@ The system combines:
 
 - TF-IDF and cosine similarity for deterministic ATS scoring
 - Dynamic keyword and skill extraction
-- Skill-gap analysis
+- Skill-gap analysis, with required skills reported as gaps and never added silently
+- Weighted, per-category scoring whose total is reconstructible from its parts
+- Bounded improvement loop that rejects any round introducing unsupported claims
+- Layout recommendation from the posting, with the reasoning shown and the choice left to you
+- Formatting and PDF-parsing diagnostics (reading order, columns, clipping, invisible text, font size)
 - LLM-powered resume and CV optimization
 - Multi-provider AI routing with automatic fallback
 - Automatic layout selection based on job-description language
@@ -82,6 +86,12 @@ The optimization workflow follows an additive approach: existing career history,
 
 ## What's New
 
+- **One-page CV workflow.** The six stages — resume, posting, analysis, improvement, generation, preview — are sections of a single dashboard page, with a progress rail. No more clicking through six pages to produce a CV.
+- **Transparent ATS scoring.** Five weighted categories, each reporting its own points won and lost, so the headline score is reconstructible from the parts rather than asserted.
+- **Bounded improvement loop.** Tailoring iterates and re-scores, but every round is checked for unsupported claims *before* its score is allowed to count. A round that would have invented a qualification is rejected and recorded as such.
+- **Layout recommendation with reasons.** A layout is recommended from the posting's industry, seniority, role type and content volume, with the reasoning shown. It is a recommendation only — the choice stays yours, and nothing is ever locked.
+- **Requirement-level checks.** Degree level, named certifications, language ability with CEFR levels, and industry terminology (GDPR, HIPAA, SOX, PCI DSS) are extracted and scored, not just keyword-matched.
+- **Formatting and PDF-parsing diagnostics.** Reading order, columns, overlapping and clipped text, invisible text, font size, and per-field parseability are checked on the finished document.
 - **Automatic layout selection.** The backend detects the job description's language and picks the appropriate CV template without user intervention.
 - **Pre-flight language normalization.** Cross-language generation translates the *input resume*, not the *generated output*. LaTeX never goes through a translation pass.
 - **Cover-letter template library.** Four distinct prompts — Classic Professional, Modern Concise, Story-Driven, Value-First — that shape the letter's structure and tone.
@@ -122,12 +132,40 @@ Generate cover letters in four distinct tones, prepare for interviews with five 
 ### Multi-Format Resume Parsing
 Supports PDF, DOCX, and TXT. Every parse emits a `parse_completed` or `parse_failed` event with timing and character count.
 
-### Hybrid ATS Scoring
-Combines TF-IDF + cosine similarity with LLM-assisted interpretation:
-- Keyword extraction and density analysis
-- Technical skill detection
-- Matching-skill and missing-skill analysis
-- Improvement suggestions
+### Transparent ATS Scoring
+
+Five categories, each scored 0–100, then weighted (weights sum to 1.0, so the
+blend is also 0–100). Every category reports its own `weighted_points` and
+`points_lost`, so the headline number is reconstructible from the parts rather
+than asserted.
+
+| Category | Weight | What it measures |
+|----------|--------|------------------|
+| Keyword Match | 30% | The posting's own vocabulary, plus its job title and any location / work-authorisation terms |
+| Required Skills | 20% | Required vs. preferred coverage, plus degree level, named certifications and language ability |
+| Experience Relevance | 20% | Lexical similarity, term overlap, soft skills, and years of experience against the stated requirement |
+| CV Structure | 15% | Sections, contact details, and formatting conventions — consistent dates, job titles, company names, bullets, heading hierarchy, measurable results, no keyword stuffing |
+| PDF Parsing | 15% | Whether the finished document survives extraction |
+
+Two properties worth knowing about:
+
+**The score is never inflated.** No check rewards padding, and a missing required
+skill costs whether or not the CV is otherwise polished. `tests/test_ats_scoring.py`
+asserts the total equals the sum of its parts, and that a CV with none of the
+posting's content scores badly.
+
+**Before a PDF exists, the PDF category says so.** Rather than award points never
+earned *or* charge the candidate for a step that has not run, that category
+reports `not_measured`, its weight is excluded, the rest is redistributed, and the
+result is labelled pre-generation. `POST /validate-ats` supplies the finished
+document and it is measured normally — that is the final score, and the two are
+stored separately because they are different measurements.
+
+Requirement-level checks that keyword matching cannot reach on its own — degree
+level, named certifications, language ability with CEFR levels, and industry
+terminology such as GDPR, HIPAA, SOX or PCI DSS — live in
+`app/services/analysis/requirement_extraction.py` and fold into the categories
+above rather than becoming new ones.
 
 ### Additive LLM Optimization
 The optimizer enriches rather than rewrites. Company names, job titles, employment dates, degree information, projects, and existing career history are preserved.
@@ -141,12 +179,26 @@ The backend inspects the JD's function-word profile and selects the appropriate 
 ### Pre-flight Language Normalization
 When the target layout requires a different language, the resume text is translated **before** generation. LaTeX is never touched by translation.
 
-### Guided Dashboard
+### One-Page CV Workflow
 
-The Streamlit dashboard is organised as the workflow rather than as a list of
-tools: Overview → Resume → Job description → ATS analysis → Optimisation → CV
-generation → PDF preview, with LLM/model settings, layout selection and
-diagnostics alongside. The pages that existed before are still there, unchanged.
+Producing a CV is one linear task, so it is one page. The six stages — resume,
+posting, analysis, improvement, generation, preview — are sections of a single
+Streamlit page, top to bottom, with a progress rail marking each done, current or
+pending:
+
+```
+📎 1. Resume → ✍️ 2. Job description → 🔍 3. ATS analysis
+             → ✏️ 4. Improvement → 📄 5. Generation → 👁 6. Preview
+```
+
+Nothing needs navigating between them. A stage that cannot run yet says so in
+one line rather than in a full-screen panel, because what it is waiting for is
+visible further up the same page. LLM/model settings, layout selection and
+diagnostics stay separate — they are configuration, not steps in the task.
+
+Each stage is still individually addressable by deep link and renders as a page
+when opened alone, so an old bookmark or a link from elsewhere still lands
+somewhere sensible.
 
 Every status the dashboard shows is a verdict something actually established. A
 provider is **CONFIGURED** when a credential and a model were found,
@@ -309,6 +361,7 @@ ai-resume-analyzer/
 │   │   ├── config.py
 │   │   ├── event_log.py
 │   │   ├── network.py
+│   │   ├── rate_limit.py
 │   │   └── security.py
 │   ├── dashboard/
 │   │   ├── views/
@@ -327,7 +380,8 @@ ai-resume-analyzer/
 │   │   │   ├── llm_settings.py
 │   │   │   ├── optimization.py
 │   │   │   ├── overview.py
-│   │   │   └── pdf_preview.py
+│   │   │   ├── pdf_preview.py
+│   │   │   └── workflow_page.py
 │   │   ├── __init__.py
 │   │   ├── components.py
 │   │   ├── helpers.py
@@ -345,8 +399,13 @@ ai-resume-analyzer/
 │   │   ├── analysis/
 │   │   │   ├── __init__.py
 │   │   │   ├── ats_analyzer.py
+│   │   │   ├── ats_improvement.py
+│   │   │   ├── ats_scoring.py
 │   │   │   ├── authenticity_checker.py
+│   │   │   ├── formatting_checks.py
+│   │   │   ├── layout_recommender.py
 │   │   │   ├── market_insights.py
+│   │   │   ├── requirement_extraction.py
 │   │   │   ├── score_explainability.py
 │   │   │   ├── skill_roadmap.py
 │   │   │   └── suggestions.py
@@ -434,6 +493,9 @@ ai-resume-analyzer/
 │   ├── test_analyzer.py
 │   ├── test_answer_engine.py
 │   ├── test_api.py
+│   ├── test_ats_improvement.py
+│   ├── test_ats_scoring.py
+│   ├── test_ats_scoring_helpers.py
 │   ├── test_automation_correctness.py
 │   ├── test_browser_use_security.py
 │   ├── test_compaction_escalation.py
@@ -444,13 +506,18 @@ ai-resume-analyzer/
 │   ├── test_dashboard_workflow.py
 │   ├── test_description_parser.py
 │   ├── test_discovery.py
+│   ├── test_document_wrapper_strip.py
 │   ├── test_documentation_consistency.py
 │   ├── test_e2e_pipeline.py
 │   ├── test_error_recovery.py
+│   ├── test_formatting_checks.py
 │   ├── test_gateway.py
+│   ├── test_generation_length_budget.py
 │   ├── test_german_minimal_ats.py
 │   ├── test_latex_escape.py
 │   ├── test_latex_special_characters_compile.py
+│   ├── test_layout_recommender.py
+│   ├── test_link_handling.py
 │   ├── test_live_status.py
 │   ├── test_llm_routing.py
 │   ├── test_mock_ats_form.py
@@ -458,11 +525,16 @@ ai-resume-analyzer/
 │   ├── test_ollama_qwen3_generation.py
 │   ├── test_orchestrator_retry.py
 │   ├── test_package_validator.py
+│   ├── test_page_fill.py
 │   ├── test_parser.py
 │   ├── test_pdf_compiler.py
 │   ├── test_pdf_content_validation.py
 │   ├── test_pdf_layouts.py
+│   ├── test_preamble_fragment_strip.py
 │   ├── test_provider_registry.py
+│   ├── test_rate_limit_handling.py
+│   ├── test_rate_limiting.py
+│   ├── test_requirement_extraction.py
 │   ├── test_retry_and_call_count.py
 │   ├── test_review_regressions.py
 │   ├── test_second_audit.py
@@ -472,11 +544,9 @@ ai-resume-analyzer/
 │   ├── test_variant_router.py
 │   └── test_verification.py
 ├── scripts/
-│   ├── ai_doctor.py
 │   ├── ai_fix.py
 │   ├── check_endpoints.py
 │   ├── check_hf_hub.py
-│   ├── doctor.py
 │   ├── llm_smoke.py
 │   ├── model_matrix.py
 │   ├── run_smoke_tests.py
@@ -531,7 +601,6 @@ Verify the toolchain before generating anything:
 
 ```bash
 pdflatex --version
-python -m scripts.doctor
 ```
 
 ### Installation
@@ -608,7 +677,6 @@ LLM_PROCESSING_LOG=data/llm_processing.jsonl
 Check it before generating anything:
 
 ```bash
-python -m scripts.doctor          # configuration, sends nothing
 python -m scripts.llm_smoke       # actually calls the configured providers
 ```
 
@@ -697,7 +765,7 @@ Primary namespace: `/api/v1/resume/`
 
 <!-- BEGIN:AUTO:API -->
 
-**Total endpoints: 47**
+**Total endpoints: 51**
 
 ### Jobs, jobs
 
@@ -734,6 +802,7 @@ Primary namespace: `/api/v1/resume/`
 | `GET` | `/api/v1/resume/analytics/summary` | Analytics Summary |
 | `POST` | `/api/v1/resume/analyze` | Analyze Resume |
 | `POST` | `/api/v1/resume/analyze-bulk` | Analyze Bulk |
+| `POST` | `/api/v1/resume/ats-breakdown` | Ats Breakdown Endpoint |
 | `POST` | `/api/v1/resume/audit-matrix` | Audit Matrix Endpoint |
 | `GET` | `/api/v1/resume/backend-status` | Backend Status |
 | `GET` | `/api/v1/resume/career-options` | Career Options |
@@ -744,7 +813,9 @@ Primary namespace: `/api/v1/resume/`
 | `POST` | `/api/v1/resume/generate-german-cv` | Generate German Cv Endpoint |
 | `POST` | `/api/v1/resume/generate-tex-cv` | Generate Tex Cv Endpoint |
 | `GET` | `/api/v1/resume/health` | Health Check |
+| `POST` | `/api/v1/resume/improvement-loop` | Improvement Loop Endpoint |
 | `POST` | `/api/v1/resume/interview-prep` | Interview Prep Endpoint |
+| `POST` | `/api/v1/resume/layout-recommendation` | Layout Recommendation Endpoint |
 | `POST` | `/api/v1/resume/linkedin-optimize` | Linkedin Optimize Endpoint |
 | `GET` | `/api/v1/resume/model-catalog` | Model Catalog |
 | `GET` | `/api/v1/resume/model-discovery` | Model Discovery |
@@ -758,6 +829,7 @@ Primary namespace: `/api/v1/resume/`
 | `DELETE` | `/api/v1/resume/tracker/applications/{app_id}` | Delete Application Endpoint |
 | `PATCH` | `/api/v1/resume/tracker/applications/{app_id}` | Update Status Endpoint |
 | `GET` | `/api/v1/resume/usage-summary` | Usage Summary |
+| `POST` | `/api/v1/resume/validate-ats` | Validate Ats Endpoint |
 | `POST` | `/api/v1/resume/validate-pdf` | Validate Pdf Endpoint |
 
 ### Streaming
@@ -962,7 +1034,7 @@ retired model id — not a statement about the provider.
 
 | Provider | Local/API | Configured | Smoke tested | Full CV pipeline | Result |
 |---|---|---|---|---|---|
-| `groq` | API | yes | **PASS** (0.4 s) | NOT TESTED | Usable text returned |
+| `groq` | API | yes | **PASS** (0.4 s) | **PASS** | 16.8 s, 3 LLM calls, 86 837-byte one-page PDF, 7 sections, 0 artifacts, 89.2 % content retained. The first API provider measured past a smoke test |
 | `omniroute` | local | yes | **PASS** (6.0 s) | NOT TESTED | A local gateway was listening on port 20128 and answered. Earlier runs found nothing there, so this row reflects one machine at one moment, not a stable property |
 | `gemini` | API | yes | FAIL (1.8 s) | NOT TESTED | 429 `RESOURCE_EXHAUSTED` — the key's quota is exhausted. An earlier run of the same key passed, so this is a billing state, not a defect |
 | `openai` | API | yes | FAIL (0.5 s) | NOT TESTED | 401 — the configured key is not valid |
@@ -1136,7 +1208,6 @@ a typo in `.env` is visible immediately.
 python -m scripts.llm_smoke              # every configured provider
 python -m scripts.llm_smoke ollama groq  # selected providers
 python -m scripts.llm_smoke --json       # machine-readable
-python -m scripts.doctor                 # configuration check, sends nothing
 ```
 
 The smoke test reports, per provider: reachable, model available, a simple prompt
@@ -1174,8 +1245,10 @@ token counts — never the content.
 completion, so a long prompt can leave too little room; the log says which of the
 two reasons applied. The native endpoint does not have this limit.
 
-**`NOT CONFIGURED` for a provider you set up** — the doctor names the variable to
-set. For a local gateway also confirm the port: `python -m scripts.llm_smoke
+**`NOT CONFIGURED` for a provider you set up** — the variable it is missing is
+named in the same message, and it is one of the provider variables in
+[`.env.example`](#environment-configuration). For a local gateway also confirm the
+port: `python -m scripts.llm_smoke
 --list omniroute` reports whether it is reachable at all.
 
 **A model id stopped working** — provider catalogues change. Run
@@ -1337,14 +1410,17 @@ Retained as-is. Each generates structured content for its domain.
 
 <!-- BEGIN:AUTO:TESTS -->
 
-**Total tests: 937** across 41 files.
+**Total tests: 1296** across 54 files.
 
 | Test file | Count |
 |-----------|-------|
 | `tests/test_agent_core.py` | 24 |
 | `tests/test_analyzer.py` | 3 |
 | `tests/test_answer_engine.py` | 11 |
-| `tests/test_api.py` | 1 |
+| `tests/test_api.py` | 9 |
+| `tests/test_ats_improvement.py` | 36 |
+| `tests/test_ats_scoring.py` | 65 |
+| `tests/test_ats_scoring_helpers.py` | 0 |
 | `tests/test_automation_correctness.py` | 11 |
 | `tests/test_browser_use_security.py` | 11 |
 | `tests/test_compaction_escalation.py` | 10 |
@@ -1352,16 +1428,21 @@ Retained as-is. Each generates structured content for its domain.
 | `tests/test_context_budgeting.py` | 24 |
 | `tests/test_cv_layouts.py` | 0 |
 | `tests/test_dashboard_query_efficiency.py` | 2 |
-| `tests/test_dashboard_workflow.py` | 25 |
+| `tests/test_dashboard_workflow.py` | 29 |
 | `tests/test_description_parser.py` | 12 |
 | `tests/test_discovery.py` | 3 |
-| `tests/test_documentation_consistency.py` | 29 |
+| `tests/test_document_wrapper_strip.py` | 10 |
+| `tests/test_documentation_consistency.py` | 31 |
 | `tests/test_e2e_pipeline.py` | 2 |
 | `tests/test_error_recovery.py` | 8 |
+| `tests/test_formatting_checks.py` | 47 |
 | `tests/test_gateway.py` | 1 |
+| `tests/test_generation_length_budget.py` | 6 |
 | `tests/test_german_minimal_ats.py` | 7 |
 | `tests/test_latex_escape.py` | 58 |
 | `tests/test_latex_special_characters_compile.py` | 20 |
+| `tests/test_layout_recommender.py` | 17 |
+| `tests/test_link_handling.py` | 13 |
 | `tests/test_live_status.py` | 3 |
 | `tests/test_llm_routing.py` | 53 |
 | `tests/test_mock_ats_form.py` | 12 |
@@ -1369,11 +1450,16 @@ Retained as-is. Each generates structured content for its domain.
 | `tests/test_ollama_qwen3_generation.py` | 85 |
 | `tests/test_orchestrator_retry.py` | 10 |
 | `tests/test_package_validator.py` | 9 |
+| `tests/test_page_fill.py` | 13 |
 | `tests/test_parser.py` | 4 |
 | `tests/test_pdf_compiler.py` | 20 |
 | `tests/test_pdf_content_validation.py` | 27 |
 | `tests/test_pdf_layouts.py` | 7 |
+| `tests/test_preamble_fragment_strip.py` | 13 |
 | `tests/test_provider_registry.py` | 53 |
+| `tests/test_rate_limit_handling.py` | 18 |
+| `tests/test_rate_limiting.py` | 21 |
+| `tests/test_requirement_extraction.py` | 36 |
 | `tests/test_retry_and_call_count.py` | 15 |
 | `tests/test_review_regressions.py` | 11 |
 | `tests/test_second_audit.py` | 8 |
@@ -1393,7 +1479,6 @@ python -m pytest -m "not integration" -q          # skip tests that need a real 
 python -m scripts.run_smoke_tests                 # ad-hoc live smoke test
 python -m scripts.llm_smoke                      # one prompt per provider
 python -m scripts.model_matrix --all             # local models, smoke + pipeline
-python -m scripts.doctor                         # environment diagnosis
 ```
 
 Every test in the suite mocks its external dependencies. No test contacts a
@@ -1411,6 +1496,38 @@ skipping.
 
 ### Additive optimization
 The pipeline enriches rather than rewrites. Factual data — employers, dates, degrees — is treated as immutable.
+
+### One page, not six
+The six workflow stages are sections of one page rather than six navigation
+entries. Producing a CV is linear, and a linear task broken across six pages is
+six clicks that do no work -- the "Continue to next step" buttons existed only to
+change which page was showing. The stages already shared all their state through
+`workflow.py`, so nothing about how they communicate had to change, only how they
+are laid out.
+
+Each stage takes a `compact` flag that suppresses its own page title and any
+button whose only effect would be to move the reader elsewhere on the same page.
+That flag does not suppress a `return`: a guard that skips work when inline but
+not its `return` runs the code after it against data that is not there, which is
+why the page is tested at five points in the flow rather than only at the start.
+
+The stages remain individually addressable by deep link, so an old bookmark still
+resolves. Navigation no longer requires dispatch and sidebar to match exactly --
+it requires every sidebar entry to have a branch, because a dead button is the
+real failure. A branch with no entry is a legitimate deep-link target.
+
+### Unmeasured is reported as unmeasured
+The PDF-parsing category has no document to measure before generation. Rather
+than award points never earned or charge the candidate for a step that has not
+run, it reports `not_measured`, its weight is redistributed, and the result is
+labelled pre-generation. The number stays reconstructible and stays honest.
+
+### Five categories, chosen to match the code
+The categories are the ones the existing analysis already produced, not a
+reorganised taxonomy. A sixth category would have broken three dashboard views
+and the scoring schema for no measured gain. Requirement-level checks that
+keyword matching cannot reach fold into the categories they belong to rather than
+becoming new ones.
 
 ### Hybrid ATS analysis
 TF-IDF + cosine similarity gives a deterministic baseline; LLM processing adds contextual enrichment.
@@ -1474,6 +1591,13 @@ Expensive UI sections wrapped in `@st.fragment`. Sidebar fetchers use `@st.cache
 - [x] LLM-powered market insights (salary, skills, competition)
 - [x] AI-generated skill roadmaps
 - [x] Hybrid authenticity checker (heuristics + LLM)
+- [x] One-page CV workflow (six stages, one scroll, progress rail)
+- [x] Weighted per-category ATS scoring with reconstructible totals
+- [x] Bounded improvement loop with unsupported-claim rejection
+- [x] Layout recommendation from posting characteristics, with reasons shown
+- [x] Requirement extraction: degree level, certifications, languages, industry terms
+- [x] Formatting and PDF-parsing diagnostics
+- [x] Final ATS validation of the generated document
 - [x] Auto-updating README
 
 ### Deferred
@@ -1540,8 +1664,14 @@ header at all, so a loopback gateway is never handed a placeholder token.
 
 ### What is not enforced
 
-- **No rate limiting.** `API_KEY` is a shared secret, not a per-user identity.
-  Do not expose the API to the internet.
+- **Rate limiting is available, off by default.** `API_KEY` is a shared secret
+  rather than a per-user identity, so a burst through it spends the configured
+  provider's token budget and the operator gets 429s from the provider a moment
+  later — which is what this project's own test runs did to a free tier. Set
+  `RATE_LIMIT_ENABLED=true` to count requests per client. The counters are in
+  memory and per process, so with N workers the effective limit is the configured
+  value times N. It stays off by default because this application is built to run
+  on one machine. Do not expose the API to the internet regardless.
 - **Logs are not a trusted sink.** Provider error bodies can echo account
   identifiers, and a provider's own error text may contain a partially masked
   key (`xpl_c934****5777`) or a `user_id`. The application redacts credentials
@@ -1569,47 +1699,67 @@ header at all, so a loopback gateway is never handed a placeholder token.
 
 ## Known limitations
 
-These are real, measured, and left in place deliberately. None of them is
-"almost done".
-
-**A short CV leaves the bottom of the page empty.** This is the content's
-shape, not a layout defect. A two-role CV occupies about 27 % of an A4 page and
-a full one about 77 %; both compile to exactly one page with no compaction. A
-template cannot fill a page without stretching the text, which reads worse than
-the space does. The compiler only ever compacts on overflow and never expands.
+Each of these is measured, and each is left in place deliberately. None of them
+is "almost done".
 
 **A CV that is too long for one page is refused, not truncated.** After
 escalating through all four compaction levels, a document that still does not
 fit raises a layout error naming the page count. Content is never dropped
-silently. This is the correct trade for an application document, and it is the
-failure mode behind roughly half of `llama3.2`'s pipeline failures.
+silently, and the factual invariant check would catch it if it were. This is the
+correct trade for an application document.
 
-**Only three local models are reliable end to end.** `qwen3:8b`, `llama3` and
-`gemma4` passed 5/5. `llama3.2` passed 8 of 17. `qwen2.5:7b` fails the invariant
-check. `deepseek-r1:8b` answers but not usefully. `glm-4.7-flash` and
-`qwen3.6` were smoke-tested only. `llama3.3:70b` returns a 500. See
-[Verified status](#verified-status) for the measured numbers.
+**A very short CV cannot be made to fill a page.** The fill pass opens up the
+leading of a document that stops far too high -- measured on the rendered page,
+not estimated -- and takes a typical CV from 37% empty to 18%. The leading is
+capped at 1.35x, so a sixteen-line CV still leaves roughly half the page empty.
+Filling it would mean stretching a handful of lines over two hundred
+millimetres, which reads worse than the space does. The answer there is a longer
+CV, and the CV is the candidate's to write.
 
-**No API provider has completed the full pipeline.** All the API rows above are
-smoke tests of a one-word prompt. The failures are credential and billing states
-in one environment, not provider defects, but the honest statement is that
-remote generation through this application is unverified.
+**`llama3.2` is reliable but not dependable.** It passes the full pipeline far
+more often than it used to -- the length budget in the generation prompt and the
+two response-handling fixes below took it from 8 of 17 runs to a majority -- but
+it still fails intermittently, and a small model has a long tail. See
+[Verified status](#verified-status) for the current rate. `qwen2.5:7b` remains
+unreliable for a different reason: it emits malformed links, which are now
+dropped rather than fatal, but it does so often enough to matter.
 
-**The layout picker shows a schematic, not a rendered page.** The preview is
-drawn from the template's own traits, so it cannot describe a layout the
-generator does not have, but it is not a preview of the final typography, line
-breaks or spacing. A real preview would cost a model call per selection. The
-page says so on screen.
+**Deep reasoning models are not usable for CV generation here.**
+`deepseek-r1:8b` answers a one-word prompt with 774 characters of reasoning
+prose, and `think:false` does not suppress it. It passes the smoke test, which is
+exactly why the smoke test and the pipeline are reported as separate columns.
+
+**Three large local models are smoke-tested only.** `glm-4.7-flash` (19 GB),
+`qwen3.6` (24 GB) and `llama3.3:70b` (43 GB) were not run through the full
+pipeline. The first two passed the smoke test; the third returns `500` from
+Ollama, which on this machine is a hardware limit rather than a defect -- an
+RTX 4060 Laptop with 8 GB of VRAM cannot hold a 43 GB model. It will behave
+differently on a machine with more memory, and nothing here has been measured
+there.
+
+**No API provider other than `groq` has been measured past a smoke test.**
+`groq` completed the full pipeline: 16.8 s, three LLM calls, an 86 837-byte
+one-page PDF with seven sections and no artifacts. The rest are credential and
+billing states in one environment, not provider defects, but the honest statement
+is that remote generation through this application is largely unverified.
+
+**Rate limiting is per process and off by default.** The counters live in memory,
+so with N workers the effective limit is the configured value times N. It is
+off by default because this application is built to run on one machine and a
+limiter that starts refusing a single-user deployment is worse than none. Turn
+it on for anything shared.
 
 **One-page compaction has a floor.** Level 3 reduces the body text from 11pt to
 10pt with 0.5 cm margins. Past that the document is refused rather than set in a
 smaller face, because a CV set at 8pt is not a CV.
 
-**Sentence-transformers is not installed by default.** `ats_analyzer.py` falls
-back to TF-IDF cosine similarity. The reason is a genuine conflict:
-sentence-transformers needs `regex>=2025.10.22` through transformers, and
-python-jobspy pins `regex<2025.0.0`. Both cannot hold in one environment. Run it
-as a separate service over HTTP if you want real embeddings.
+**Semantic embeddings are only installable on Python 3.13.** The feature is
+verified working -- two paraphrases of the same achievement score 0.574 cosine
+similarity against 0.044 for unrelated text -- but `sentence-transformers` pulls
+`transformers`, which needs `regex>=2025.10.22`, and python-jobspy pins
+`regex<2025.0.0`. On 3.13 the jobspy entry is skipped so there is no conflict; on
+3.11 and 3.12 the pin wins and only TF-IDF is available. The application is
+unaffected either way: the import is guarded and it falls back silently.
 
 **Python 3.13 loses one discovery source.** python-jobspy has no 3.13-compatible
 release, so its requirements entry is marked `python_version < "3.13"`. The
@@ -1617,10 +1767,37 @@ import is guarded and the application starts, but the JobSpy source is
 unavailable on 3.13. 3.11 and 3.12 are the tested targets and the Dockerfile
 uses 3.12.
 
-**The text-metric layout fingerprint is weaker than the layouts really are.** It
-groups all ten templates into seven structural families. Visual inspection
-confirms they differ in font, heading case and colour, so the fingerprint
-understates the differences. It is a cheap regression guard, not a description.
+**The layout guard reads structure, not appearance.** The regression guard
+compares packages, colours, defined macros, column machinery, heading treatment,
+margin geometry, body type size and measure. All ten templates are distinct under
+it. It cannot see kerning or a colour that renders nearly identically, so it is a
+guard against convergence rather than a description of the pages.
+
+**The score you see before generating is not the score you get.** The
+pre-generation score has no PDF-parsing component, because there is no document
+to parse yet. That category reports `not_measured`, its weight is redistributed
+across the rest, and the result is labelled pre-generation -- so the number is
+honest, but it is measuring four things rather than five. `POST /validate-ats`
+scores the finished document and is the number to act on. The two are stored
+separately because they are different measurements, and the improvement loop's
+"final" score is the post-generation one.
+
+**The keyword-stuffing check is a threshold, and thresholds lie.** It fires when
+a small set of content words occupies more than 5% of the document (floor of 4
+occurrences), excluding a stopword list -- without that exclusion, "with", "team"
+and "work" are the most repeated words in any CV and every CV is accused of
+padding. It is tuned to stay quiet, because a false positive tells a candidate
+their CV is padded and then recommends a rewrite that produces the same document.
+It is the one check here that has not yet been calibrated against a large corpus
+of real CVs, and it is the one most likely to be wrong in either direction.
+
+**Requirement extraction is pattern-based, so it has known blind spots.** Degree
+level, certifications and language ability are found by matching labelled
+sections and named credentials, which means an unusual phrasing ("I hold a
+Habilitation") or a credential spelled differently is not recognised. A miss
+lowers the score without the candidate having done anything wrong. The checks
+are additive to keyword matching rather than replacing it, so a named skill the
+candidate *did* list still counts.
 
 **Streamlit's execution model makes some things expensive.** Streaming LLM
 responses into the dashboard and A/B testing the LinkedIn "About" section are

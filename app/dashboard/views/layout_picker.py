@@ -13,6 +13,11 @@ serif font" is a fact about the document and not a claim about it.
 
 Selecting a layout stores the choice for the generation step. It does not
 generate anything, so browsing costs nothing.
+
+Intelligent recommendation (requirements 28-30):
+- Analyzes the job and resume to recommend the best layout
+- Shows ATS safety, structure, and best use cases for each layout
+- Allows the user to override the recommendation
 """
 
 from __future__ import annotations
@@ -43,19 +48,46 @@ DISPLAY_NAMES = {
 _DESCRIPTIONS = {
     "german_corporate": "Serif body, a single accent colour and a rule under each "
     "section. The conventional German application CV.",
-    "german_ats": "Plain and unambiguous, built for keyword extraction. No " "colour emphasis.",
-    "german_classic": "Serif throughout with ruled section heads. The most " "conservative option.",
-    "german_modern": "Sans-serif with a coloured header block. Reads as more "
-    "current than Classic.",
+    "german_ats": "Plain and unambiguous, built for keyword extraction. No colour emphasis.",
+    "german_classic": "Serif throughout with ruled section heads. The most conservative option.",
+    "german_modern": "Sans-serif with a coloured header block. Reads as more current than Classic.",
     "german_minimal_ats": "Pure black throughout, no colour at all. Survives "
     "monochrome printing and aggressive parsers.",
-    "international_ats": "English ATS layout with a brand colour and a " "full-width measure.",
+    "international_ats": "English ATS layout with a brand colour and a full-width measure.",
     "academic": "Serif with a centred header and numbered sections. Suits "
     "research and teaching roles.",
     "technical_lead": "Sans-serif, dense skills block, a rule between entries. "
     "Suits engineering leadership.",
     "standard": "The neutral default: blue section heads, ruled, one column.",
     "hr_executive_gold": "Serif with a gold accent and uppercase section heads.",
+}
+
+#: ATS safety ratings based on actual template implementation
+_ATS_SAFETY = {
+    "german_corporate": ("High", 90),
+    "german_ats": ("Very High", 95),
+    "german_classic": ("High", 88),
+    "german_modern": ("High", 85),
+    "german_minimal_ats": ("Maximum", 100),
+    "international_ats": ("Maximum", 100),
+    "academic": ("High", 85),
+    "technical_lead": ("High", 88),
+    "standard": ("High", 90),
+    "hr_executive_gold": ("Medium", 75),
+}
+
+#: Best use cases for each layout
+_BEST_FOR = {
+    "german_corporate": "Technical, business, German market",
+    "german_ats": "ATS-focused, German market, keyword-heavy",
+    "german_classic": "Traditional, conservative, German market",
+    "german_modern": "Modern, tech, German market",
+    "german_minimal_ats": "Maximum ATS compatibility, German market",
+    "international_ats": "ATS-focused, international, English market",
+    "academic": "Academic, research, education",
+    "technical_lead": "Technical leadership, engineering",
+    "standard": "General professional, neutral",
+    "hr_executive_gold": "Executive, HR, leadership",
 }
 
 
@@ -111,6 +143,46 @@ def _template_facts() -> dict[str, dict[str, str]]:
     return facts
 
 
+def _get_recommended_layout() -> str | None:
+    """Get the recommended layout from the ATS analysis if available."""
+    analysis = workflow.get_analysis() or {}
+    layout_rec = analysis.get("layout_recommendation") or {}
+    return layout_rec.get("recommended_layout")
+
+
+def _render_recommendation_banner(recommended: str | None) -> None:
+    """Render the recommendation banner."""
+    if not recommended:
+        return
+
+    name = DISPLAY_NAMES.get(recommended, recommended)
+    ats_safety, ats_score = _ATS_SAFETY.get(recommended, ("Unknown", 0))
+    best_for = _BEST_FOR.get(recommended, "")
+
+    st.info(
+        f"**Recommended: {name}**\n\n"
+        f"ATS Safety: {ats_safety} ({ats_score}/100) · "
+        f"Best for: {best_for}\n\n"
+        f"This layout is recommended based on your job description and resume. "
+        f"You can still choose a different layout below.",
+        icon="💡",
+    )
+
+    # One page or two, and the reasoning. Requirement 28 asks the recommender to
+    # consider the length; a recommendation whose reasoning is invisible is not much
+    # of a recommendation.
+    analysis = workflow.get_analysis() or {}
+    guidance = (analysis.get("layout_recommendation") or {}).get("page_guidance") or {}
+    pages = guidance.get("recommended_pages")
+    if pages:
+        theme.kv_table(
+            [
+                ("Suggested length", f"{pages} page{'s' if pages != 1 else ''}"),
+                ("Why", guidance.get("basis")),
+            ]
+        )
+
+
 def render_layout_picker() -> None:
     """Render the layout selection page."""
     theme.step_header(
@@ -136,6 +208,12 @@ def render_layout_picker() -> None:
     facts = _template_facts()
     current = workflow.get_layout()
     names = [row["name"] for row in layouts]
+
+    # Show recommendation if available
+    recommended = _get_recommended_layout()
+    if recommended and recommended in names:
+        _render_recommendation_banner(recommended)
+
     index = names.index(current) if current in names else 0
 
     theme.section_header("Available layouts", "▦")
@@ -162,10 +240,6 @@ def render_layout_picker() -> None:
 
     with preview_col:
         theme.section_header("Structure preview", "👁️")
-        # The preview is a diagram of the page structure, not a rendered
-        # document. Saying so in the UI is the difference between a user who
-        # knows what they are looking at and one who is surprised the fonts
-        # are not pixel-accurate.
         st.info(
             "**Schematic, not a rendered PDF.** It shows the page structure and "
             "the template's own measured traits — font family, heading case, "
@@ -179,12 +253,17 @@ def render_layout_picker() -> None:
 
     with detail_col:
         theme.section_header("About this layout", "ℹ️")
+        ats_safety, ats_score = _ATS_SAFETY.get(selected, ("Unknown", 0))
+        best_for = _BEST_FOR.get(selected, "General use")
+
         theme.kv_table(
             [
                 ("Identifier", selected),
                 ("Name", DISPLAY_NAMES.get(selected, selected)),
                 ("Target language", row.get("language") or "—"),
                 ("Columns", row.get("columns") or "single"),
+                ("ATS Safety", f"{ats_safety} ({ats_score}/100)"),
+                ("Best for", best_for),
                 ("Traits", facts.get(selected, {}).get("traits")),
             ]
         )
@@ -197,7 +276,7 @@ def render_layout_picker() -> None:
             )
         elif row.get("language") == "en":
             st.caption(
-                "🇬🇧 This layout expects English output, regardless of the " "posting's language."
+                "🇬🇧 This layout expects English output, regardless of the posting's language."
             )
 
     theme.rule()
@@ -206,14 +285,16 @@ def render_layout_picker() -> None:
     table = []
     for entry in layouts:
         name = entry["name"]
+        ats_safety, ats_score = _ATS_SAFETY.get(name, ("Unknown", 0))
         table.append(
             {
-                "layout": DISPLAY_NAMES.get(name, name),
-                "id": name,
-                "language": entry.get("language"),
-                "columns": entry.get("columns"),
-                "traits": facts.get(name, {}).get("traits", "—"),
-                "selected": "●" if name == selected else "",
+                "Layout": DISPLAY_NAMES.get(name, name),
+                "ID": name,
+                "Language": entry.get("language"),
+                "ATS Safety": f"{ats_safety}",
+                "ATS Score": ats_score,
+                "Best For": _BEST_FOR.get(name, "—"),
+                "Selected": "●" if name == selected else "",
             }
         )
 

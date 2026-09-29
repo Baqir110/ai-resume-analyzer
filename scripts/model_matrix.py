@@ -23,11 +23,23 @@ Two stages, and passing the first says nothing about the second:
     produce a complete CV. Only this stage says whether the model is usable by
     the application, and the two are reported separately on purpose.
 
+The same two stages apply to any registered provider, not only Ollama. That
+matters because "the local models pass and the API providers were never run past
+a smoke test" is a much weaker statement than "here is what each API provider did
+through the full pipeline".
+
 Usage:
     python -m scripts.model_matrix --smoke
     python -m scripts.model_matrix --pipeline
     python -m scripts.model_matrix --all --json
     python -m scripts.model_matrix --model qwen3:8b --all
+    python -m scripts.model_matrix --provider groq --all
+    python -m scripts.model_matrix --provider ollama --model qwen3:8b --pipeline
+
+``--provider`` defaults to ``ollama``. Installed-model enumeration is local-only,
+because Ollama's tag list is the only source that can answer "not installed";
+for any other provider the model comes from the registry's configuration, and an
+unconfigured provider is reported NOT CONFIGURED.
 """
 
 from __future__ import annotations
@@ -50,6 +62,10 @@ STATUS_PASS = "PASS"
 STATUS_FAIL = "FAIL"
 STATUS_SKIPPED = "SKIPPED"
 STATUS_NOT_INSTALLED = "NOT INSTALLED"
+#: Distinct from NOT INSTALLED on purpose. An API provider has no local tag
+#: list, so "not installed" would be a claim the system cannot make. "Not
+#: configured" is both true and actionable: it names the variable to set.
+STATUS_NOT_CONFIGURED = "NOT CONFIGURED"
 STATUS_NOT_CONFIGURED = "NOT CONFIGURED"
 STATUS_NOT_TESTED = "NOT TESTED"
 
@@ -196,7 +212,27 @@ def resolve_installed(requested: str, installed: dict[str, dict]) -> str:
     return ""
 
 
-def smoke_test(model: str) -> dict[str, Any]:
+def _credential_present(spec) -> bool:
+    """
+    Whether a provider has a credential, read the way the router reads one.
+
+    The value is never returned, printed or compared beyond emptiness, so this
+    cannot leak a key into a report.
+
+    ``load_dotenv`` runs on import of the provider module, not on import of this
+    script, so the check has to load the environment itself. Reading bare
+    ``os.environ`` here reported every provider as unconfigured even when ``.env``
+    held a working key, which is how a passing smoke test and a NOT CONFIGURED
+    row came to disagree.
+    """
+    import os
+
+    from app.services.llm import provider as _provider  # noqa: F401  (loads .env)
+
+    return any(os.environ.get(name, "").strip() for name in spec.key_env)
+
+
+def smoke_test(model: str, provider: str = "ollama") -> dict[str, Any]:
     """
     One harmless prompt against one model, timed, with the response classified.
 
@@ -208,6 +244,7 @@ def smoke_test(model: str) -> dict[str, Any]:
 
     row: dict[str, Any] = {
         "model": model,
+        "provider": provider,
         "status": STATUS_NOT_TESTED,
         "latency_s": None,
         "response_chars": None,
@@ -221,7 +258,7 @@ def smoke_test(model: str) -> dict[str, Any]:
     try:
         answer = LLMService.generate(
             prompt=SMOKE_PROMPT,
-            provider="ollama",
+            provider=provider,
             model=model,
             # direct: a smoke test must exercise the model it was asked about,
             # not fall through to something else that happens to answer.
@@ -231,7 +268,7 @@ def smoke_test(model: str) -> dict[str, Any]:
     except Exception as exc:
         row["latency_s"] = round(time.perf_counter() - started, 2)
         row["status"] = STATUS_FAIL
-        row["detail"] = LLMService.classify_for_report(exc, "ollama")[:160]
+        row["detail"] = LLMService.classify_for_report(exc, provider)[:160]
         return row
 
     row["latency_s"] = round(time.perf_counter() - started, 2)
@@ -258,7 +295,11 @@ def smoke_test(model: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def pipeline_test(model: str, layout: str = "german_corporate") -> dict[str, Any]:
+def pipeline_test(
+    model: str,
+    layout: str = "german_corporate",
+    provider: str = "ollama",
+) -> dict[str, Any]:
     """
     Run the real application path on the synthetic fixture.
 
@@ -286,6 +327,7 @@ def pipeline_test(model: str, layout: str = "german_corporate") -> dict[str, Any
 
     row: dict[str, Any] = {
         "model": model,
+        "provider": provider,
         "layout": layout,
         "status": STATUS_NOT_TESTED,
         "total_s": None,
@@ -333,7 +375,7 @@ def pipeline_test(model: str, layout: str = "german_corporate") -> dict[str, Any
             resume_text=FIXTURE_RESUME,
             job_description=FIXTURE_JD,
             missing_skills=missing,
-            provider="ollama",
+            provider=provider,
             model_name=model,
             route_mode="direct",
             layout_style=layout,
@@ -346,7 +388,7 @@ def pipeline_test(model: str, layout: str = "german_corporate") -> dict[str, Any
             FIXTURE_RESUME,
             FIXTURE_JD,
             missing,
-            provider="ollama",
+            provider=provider,
             model_name=model,
             route_mode="direct",
             layout_style=layout,
@@ -393,7 +435,7 @@ def pipeline_test(model: str, layout: str = "german_corporate") -> dict[str, Any
 
     except Exception as exc:
         row["status"] = STATUS_FAIL
-        row["detail"] = LLMService.classify_for_report(exc, "ollama")[:200]
+        row["detail"] = LLMService.classify_for_report(exc, provider)[:200]
     finally:
         LLMService.generate = classmethod(real_generate)
         row["total_s"] = round(time.perf_counter() - overall, 2)
@@ -424,15 +466,19 @@ def print_smoke(rows: list[dict[str, Any]], installed: dict[str, dict]) -> None:
 
     for row in rows:
         status = row["status"]
-        latency = _fmt(row["latency_s"], "s")
-        if status == STATUS_NOT_INSTALLED:
+        if status in (STATUS_NOT_INSTALLED, STATUS_NOT_CONFIGURED):
+            # Nothing was sent, so latency and token counts are meaningless.
+            # Printing "-" for each would imply a measurement was taken.
             print(f"  {row['model']:<{name_width}}  {status}")
+            if row.get("detail"):
+                print(f"      {row['detail']}")
             continue
+        latency = _fmt(row.get("latency_s"), "s")
         print(
             f"  {row['model']:<{name_width}}  {status:<6} {latency:>7}  "
-            f"chars={_fmt(row['response_chars']):>6}  "
-            f"completion={_fmt(row['completion_tokens']):>6}  "
-            f"{row['detail']}"
+            f"chars={_fmt(row.get('response_chars')):>6}  "
+            f"completion={_fmt(row.get('completion_tokens')):>6}  "
+            f"{row.get('detail', '')}"
         )
 
     print()
@@ -454,22 +500,28 @@ def print_pipeline(rows: list[dict[str, Any]]) -> None:
         status = row["status"]
         print(f"  {row['model']:<{name_width}}  {status}")
 
-        if status == STATUS_NOT_TESTED:
+        if status in (STATUS_NOT_TESTED, STATUS_NOT_INSTALLED, STATUS_NOT_CONFIGURED):
+            # Nothing was measured, so there is nothing to report beyond the
+            # reason. Indexing the measurement keys here would raise KeyError and
+            # hide the very failure this reporter exists to surface.
+            if row.get("detail"):
+                print(f"      {row['detail']}")
+            print()
             continue
 
         stages = row.get("stages", {})
         rendered = "  ".join(
             f"{key.replace('_s', '').replace('_', ' ')}={value}s" for key, value in stages.items()
         )
-        print(f"      total={_fmt(row['total_s'], 's')}  " f"llm_calls={row['llm_calls']}")
+        print(f"      total={_fmt(row.get('total_s'), 's')}  " f"llm_calls={row.get('llm_calls')}")
         print(f"      {rendered}")
         print(
-            f"      ats={_fmt(row['ats_score'])}  "
+            f"      ats={_fmt(row.get('ats_score'))}  "
             f"latex={_fmt(row.get('latex_chars'), 'c')}  "
-            f"pdf={_fmt(row['pdf_bytes'], 'B')}  "
-            f"pages={_fmt(row['pdf_pages'])}  "
-            f"text={_fmt(row['pdf_text_chars'], 'c')}  "
-            f"retention={_fmt(row['content_retention'])}"
+            f"pdf={_fmt(row.get('pdf_bytes'), 'B')}  "
+            f"pages={_fmt(row.get('pdf_pages'))}  "
+            f"text={_fmt(row.get('pdf_text_chars'), 'c')}  "
+            f"retention={_fmt(row.get('content_retention'))}"
         )
         print(
             f"      sections={len(row.get('sections_found') or [])}  "
@@ -492,7 +544,16 @@ def main(argv: list[str] | None = None) -> int:
         "--model",
         action="append",
         default=[],
-        help="model to test; repeatable. Default: everything installed.",
+        help="model to test; repeatable. Default: everything installed (Ollama).",
+    )
+    parser.add_argument(
+        "--provider",
+        default="ollama",
+        help=(
+            "provider to test, as named in the registry. Default: ollama. "
+            "Installed-model enumeration is local-only; for any other provider "
+            "the model is taken from this flag or from the registry."
+        ),
     )
     parser.add_argument("--smoke", action="store_true", help="smoke test only")
     parser.add_argument("--pipeline", action="store_true", help="full CV pipeline only")
@@ -505,19 +566,49 @@ def main(argv: list[str] | None = None) -> int:
     do_smoke = args.smoke or args.all or not (args.smoke or args.pipeline)
     do_pipeline = args.pipeline or args.all or not (args.smoke or args.pipeline)
 
-    import requests
-
-    try:
-        with requests.get("http://localhost:11434/api/tags", timeout=5):
-            ollama_up = True
-    except Exception:
-        ollama_up = False
-
+    is_local = args.provider == "ollama"
+    ollama_up = False
     installed: dict[str, dict] = {}
+
+    if is_local:
+        import requests
+
+        try:
+            with requests.get("http://localhost:11434/api/tags", timeout=5):
+                ollama_up = True
+        except Exception:
+            ollama_up = False
+
+    # A non-local provider takes its model from configuration. "Not installed"
+    # is a statement about a tag list, and no API provider has one, so claiming
+    # it here would be a category error rather than a helpful default.
+    configured_model = ""
+    configured_note = ""
+
+    if not is_local:
+        from app.services.llm.registry import PROVIDER_REGISTRY
+
+        spec = PROVIDER_REGISTRY.get(args.provider)
+
+        if spec is None:
+            print("=" * 78)
+            print(f"Unknown provider {args.provider!r}.")
+            print("=" * 78)
+            print("  Registered providers:")
+            for name in PROVIDER_REGISTRY:
+                print(f"    {name}")
+            return 2
+
+        if spec.requires_key and not _credential_present(spec):
+            configured_note = f"no credential; set one of {', '.join(spec.key_env)}"
+        elif not spec.default_model:
+            configured_note = f"no model configured; set {spec.model_env}"
+        else:
+            configured_model = spec.default_model
 
     if args.model:
         targets = list(dict.fromkeys(args.model))
-    elif ollama_up:
+    elif is_local and ollama_up:
         installed = installed_ollama_models()
         targets = list(installed)
         # Anything the task names explicitly but that is absent is still
@@ -525,61 +616,96 @@ def main(argv: list[str] | None = None) -> int:
         for name in TASK_REQUIRED:
             if name not in targets:
                 targets.append(name)
-    else:
+    elif is_local:
         targets = list(TASK_REQUIRED)
+    elif configured_model:
+        targets = [configured_model]
+    else:
+        targets = ["(unconfigured)"]
 
-    if not ollama_up:
+    if is_local and not ollama_up:
         print("=" * 78)
         print("Ollama is not reachable on http://localhost:11434")
         print("=" * 78)
         print(f"  Every local model is {STATUS_NOT_INSTALLED} from here.")
         print("  Start it with `ollama serve` and re-run.")
+        print("  To test an API provider instead: --provider groq")
         return 0
 
-    if not installed:
+    if is_local and not installed:
         installed = installed_ollama_models()
 
-    print()
-    print("=" * 78)
-    print("Local model inventory")
-    print("=" * 78)
-    print(f"  {len(installed)} model(s) installed. Nothing is downloaded.")
-    print()
-    for name in sorted(installed):
-        row = installed[name]
-        size_gb = row.get("size_bytes")
-        size = f"{size_gb / 1e9:.1f} GB" if size_gb else "-"
-        flag = " (required)" if name in TASK_REQUIRED else ""
-        print(f"    {name:26} {size:>9}{flag}")
+    if is_local:
+        print()
+        print("=" * 78)
+        print("Local model inventory")
+        print("=" * 78)
+        print(f"  {len(installed)} model(s) installed. Nothing is downloaded.")
+        print()
+        for name in sorted(installed):
+            row = installed[name]
+            size_gb = row.get("size_bytes")
+            size = f"{size_gb / 1e9:.1f} GB" if size_gb else "-"
+            flag = " (required)" if name in TASK_REQUIRED else ""
+            print(f"    {name:26} {size:>9}{flag}")
+    else:
+        print()
+        print("=" * 78)
+        print(f"Provider: {args.provider}")
+        print("=" * 78)
+        print(f"  model   : {configured_model or '(none)'}")
+        print(f"  status  : {configured_note or 'configured'}")
 
     smoke_rows: list[dict[str, Any]] = []
     pipeline_rows: list[dict[str, Any]] = []
 
     for requested in targets:
-        resolved = resolve_installed(requested, installed)
+        if is_local:
+            resolved = resolve_installed(requested, installed)
+        else:
+            # For an API provider the name given is the name to call. There is
+            # no tag list to resolve it against, and refusing it here would be
+            # reporting "not installed" about a model that was never local.
+            resolved = requested
+            if not configured_model and requested == "(unconfigured)":
+                resolved = ""
 
         if not resolved:
+            # A local provider reports NOT INSTALLED because a tag list can
+            # prove it. An API provider with no credential or no model reports
+            # NOT CONFIGURED, which is the fact and the actionable one.
+            row_status = (
+                STATUS_NOT_CONFIGURED if not is_local and configured_note else STATUS_NOT_INSTALLED
+            )
             smoke_rows.append(
                 {
                     "model": requested,
-                    "status": STATUS_NOT_INSTALLED,
+                    "provider": args.provider,
+                    "status": row_status,
                     "latency_s": None,
                     "response_chars": None,
                     "completion_tokens": None,
                     "prompt_tokens": None,
                     "usable_text": False,
-                    "detail": "not pulled; not downloaded by this script",
+                    "detail": (
+                        configured_note
+                        if not is_local and configured_note
+                        else "not pulled; not downloaded by this script"
+                    ),
                 }
             )
             pipeline_rows.append(
                 {
                     "model": requested,
+                    "provider": args.provider,
                     "layout": args.layout,
-                    "status": STATUS_NOT_INSTALLED,
+                    "status": row_status,
                     "total_s": None,
                     "llm_calls": 0,
                     "stages": {},
-                    "detail": "not installed",
+                    "detail": (
+                        configured_note if not is_local and configured_note else "not installed"
+                    ),
                 }
             )
             continue
@@ -590,7 +716,7 @@ def main(argv: list[str] | None = None) -> int:
         }
 
         if do_smoke:
-            result = smoke_test(resolved)
+            result = smoke_test(resolved, args.provider)
             result["model"] = requested
             result["resolved"] = resolved
             smoke_rows.append(result)
@@ -601,7 +727,7 @@ def main(argv: list[str] | None = None) -> int:
         # Only a model that answered is carried into the pipeline stage.
         if do_pipeline:
             if not do_smoke or entry["smoke"] == STATUS_PASS:
-                result = pipeline_test(resolved, args.layout)
+                result = pipeline_test(resolved, args.layout, args.provider)
                 result["model"] = requested
                 result["resolved"] = resolved
                 pipeline_rows.append(result)
@@ -624,6 +750,7 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "smoke_prompt": SMOKE_PROMPT,
+                    "provider": args.provider,
                     "installed": sorted(installed),
                     "smoke": smoke_rows,
                     "pipeline": pipeline_rows,

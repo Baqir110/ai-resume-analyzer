@@ -145,6 +145,13 @@ GENERAL_STOP_WORDS = {
 # SYNONYMS
 # ============================================================
 
+#: Equivalent terms, so a CV written with one is not reported as missing the
+#: other. The pairs are symmetric because a match is an equivalence: checking
+#: only one direction silently scored every CV that said "Terraform" against a
+#: posting that said "infrastructure as code" as a genuine gap.
+#:
+#: Values are the *normalised* spelling each key resolves to. Both sides of a
+#: pair must therefore be present for the lookup to work in either direction.
 SYNONYM_MAP = {
     "k8s": "kubernetes",
     "kubernetes": "k8s",
@@ -160,8 +167,12 @@ SYNONYM_MAP = {
     "react": "reactjs",
     "nodejs": "node.js",
     "node.js": "nodejs",
+    # "Infrastructure as Code" and the tool that implements it are the same
+    # requirement in practice: a posting asking for one is satisfied by a CV
+    # that names the other.
     "terraform": "infrastructure as code",
-    "infrastructure-as-code": "infrastructure as code",
+    "infrastructure as code": "terraform",
+    "infrastructure-as-code": "terraform",
 }
 
 
@@ -335,7 +346,7 @@ TECH_PATTERN = re.compile(
     (?:
         \bC\+\+\b
         |
-        \bC#\b
+        C\#
         |
         \bCI/CD\b
         |
@@ -404,9 +415,15 @@ def is_skill_in_text(skill: str, text_lower: str) -> bool:
     synonym = SYNONYM_MAP.get(skill_lower)
     if synonym:
         synonym = normalize_skill(synonym)
-        syn_pattern = r"(?<![a-zA-Z0-9])" + re.escape(synonym) + r"(?![a-zA-Z0-9])"
-        if re.search(syn_pattern, text_lower, flags=re.IGNORECASE):
-            return True
+        # The synonym gets the same hyphen/space treatment as the skill itself.
+        # Without it, a CV saying "infrastructure as code" does not satisfy a
+        # search for "terraform", because the synonym normalises to the hyphenated
+        # spelling and the CV has the spaced one -- the mapping worked in one
+        # direction only.
+        for form in {synonym, synonym.replace("-", " "), synonym.replace(" ", "-")}:
+            syn_pattern = r"(?<![a-zA-Z0-9])" + re.escape(form) + r"(?![a-zA-Z0-9])"
+            if re.search(syn_pattern, text_lower, flags=re.IGNORECASE):
+                return True
 
     return False
 

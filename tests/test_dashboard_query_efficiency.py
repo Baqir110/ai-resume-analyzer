@@ -17,13 +17,25 @@ deterministic, and it is the property that stops the regression returning.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from streamlit.testing.v1 import AppTest
+
+# Imported by bare module name, not as ``tests.test_dashboard_workflow``.
+# There is no ``tests/__init__.py``, so ``tests`` is not a package and the
+# dotted form raises ModuleNotFoundError at collection -- which took the whole
+# run down before this file ever executed, so its assertions had not been
+# running at all.
+from test_dashboard_workflow import APP
 
 from app.dashboard import workflow
 from app.services.jobs.agent_schemas import ApplicationState
 from app.services.tracking import state_machine
-from tests.test_dashboard_workflow import APP
+
+#: A rendered count: a plain integer, or an abbreviated one such as "9.3K" or
+#: "1.2M". Anything else is a placeholder.
+_COUNT_LIKE = re.compile(r"^\d[\d,.]*\s*[KMB]?$", re.IGNORECASE)
 
 
 def test_agent_page_reads_every_state_in_one_query(monkeypatch):
@@ -92,6 +104,7 @@ def test_agent_page_shows_every_overview_metric(monkeypatch):
     assert not app.exception, [f"{type(e.value).__name__}: {e.value}" for e in app.exception]
 
     labels = [str(metric.label) for metric in app.metric]
+    by_label = {str(metric.label): str(metric.value).strip() for metric in app.metric}
 
     for state in (
         ApplicationState.DISCOVERED,
@@ -105,11 +118,31 @@ def test_agent_page_shows_every_overview_metric(monkeypatch):
         expected = state.value.replace("_", " ").title()
         assert expected in labels, f"missing the {expected!r} metric; got {labels}"
 
-    # Every metric must show a count, not a placeholder. Streamlit reports a
-    # metric's value as a string, so the check is that it parses as an integer
-    # -- which rules out "", "-", "n/a" and a missing value.
+    # Each state metric must show a count, not a placeholder -- "" or "-" or
+    # "n/a" is what a lost metric looks like.
+    #
+    # Scoped to the state metrics deliberately. The page also shows cost and
+    # duration, which are currency and time, so asserting a count on every metric
+    # on the page was asserting something that was never true. Both a plain
+    # integer and an abbreviated one ("9.3K") count here: whether a value is large
+    # enough to abbreviate depends on the shared usage log, which every other
+    # test also writes to, and depending on that made this test fail or pass
+    # purely on the order it ran in.
+    for state in (
+        ApplicationState.DISCOVERED,
+        ApplicationState.MATCHED,
+        ApplicationState.SKIPPED,
+        ApplicationState.READY_TO_SUBMIT,
+        ApplicationState.SUBMITTED,
+        ApplicationState.SUBMISSION_FAILED,
+        ApplicationState.CAPTCHA_REQUIRED,
+    ):
+        label = state.value.replace("_", " ").title()
+        text = by_label[label].lstrip("+-")
+        assert _COUNT_LIKE.match(
+            text
+        ), f"metric {label!r} rendered {by_label[label]!r} rather than a count"
+
+    # And no metric anywhere on the page may be blank.
     for metric in app.metric:
-        text = str(metric.value).strip()
-        assert text.lstrip(
-            "+-"
-        ).isdigit(), f"metric {metric.label!r} rendered {metric.value!r} rather than a count"
+        assert str(metric.value).strip(), f"metric {metric.label!r} rendered nothing"

@@ -24,12 +24,13 @@ from app.dashboard.helpers import get_api_base
 _JD_LIMIT_NOTE = "the backend accepts up to 200,000 characters"
 
 
-def render_resume_step() -> None:
+def render_resume_step(*, compact: bool = False) -> None:
     """Render the resume input step."""
-    theme.step_header(
+    workflow.section_header(
         "1",
         "Resume",
         "Upload the CV you want to analyse. PDF, DOCX or TXT.",
+        compact=compact,
     )
 
     left, right = st.columns([1.1, 1], gap="large")
@@ -60,22 +61,29 @@ def render_resume_step() -> None:
                 ]
             )
         else:
-            theme.empty_state(
-                "No resume uploaded",
-                "The analysis and every generation step need one. Nothing is "
-                "sent anywhere until you upload a file.",
-                action="Drop a PDF, DOCX or TXT above",
-                icon="📎",
-            )
+            if compact:
+                st.caption("📎 No resume uploaded yet.")
+            else:
+                theme.empty_state(
+                    "No resume uploaded",
+                    "The analysis and every generation step need one. Nothing is "
+                    "sent anywhere until you upload a file.",
+                    action="Drop a PDF, DOCX or TXT above",
+                    icon="📎",
+                )
 
     with right:
+        # The return is unconditional; only the explanation inside it is
+        # standalone-only. Tying the return to `compact` as well let the unpack
+        # below run against a missing upload on the single-page workflow.
         if not workflow.has_upload():
-            theme.section_header("What happens next", "➡️")
-            st.markdown(
-                "1. The file is stored for this session only.\n\n"
-                "2. The backend extracts the text when a request needs it.\n\n"
-                "3. The extracted text is scored against the job description."
-            )
+            if not compact:
+                theme.section_header("What happens next", "➡️")
+                st.markdown(
+                    "1. The file is stored for this session only.\n\n"
+                    "2. The backend extracts the text when a request needs it.\n\n"
+                    "3. The extracted text is scored against the job description."
+                )
             return
 
         filename, payload, _mime = workflow.get_upload()
@@ -115,19 +123,23 @@ def render_resume_step() -> None:
             )
 
     theme.rule()
-    if workflow.has_upload() and not workflow.has_analysis():
+    # Only offered when there is somewhere to go. On the single-page workflow the
+    # next stage is already below, so a "continue" button would just be a way to
+    # scroll, which the scrollbar already does.
+    if not compact and workflow.has_upload() and not workflow.has_analysis():
         if st.button("Continue to job description →", type="primary"):
             st.session_state[workflow.KEY_PAGE] = "job_input"
             st.rerun()
 
 
-def render_job_input_step() -> None:
+def render_job_input_step(*, compact: bool = False) -> None:
     """Render the job description input step."""
-    theme.step_header(
+    workflow.section_header(
         "2",
         "Job description",
         "Paste the posting, or upload it. The whole text is used — nothing is "
         "summarised before scoring.",
+        compact=compact,
     )
 
     tab_paste, tab_upload = st.tabs(["✍️ Paste text", "📄 Upload a file"])
@@ -218,6 +230,9 @@ def render_job_input_step() -> None:
     ready = bool(workflow.get_job().strip())
     if not workflow.has_upload():
         theme.pills([(theme.NOT_TESTED, "a resume is required as well")])
+
+    if compact:
+        return
 
     if st.button(
         "Continue to ATS analysis →",

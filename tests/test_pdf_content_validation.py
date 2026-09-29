@@ -415,15 +415,46 @@ def _fingerprint(template: str) -> frozenset[str]:
     Structural traits of a template.
 
     Deliberately structural -- packages, colours, defined macros, column
-    machinery, heading treatment -- rather than a hash of the text. Two PDFs can
-    differ byte-for-byte and be the same document; a change in these traits is
-    what actually makes a layout different.
+    machinery, heading treatment, margin geometry, body type size, measure --
+    rather than a hash of the text. Two PDFs can differ byte-for-byte and be the
+    same document; a change in these traits is what actually makes a layout
+    different.
+
+    The dimensions are chosen so that a layout is not identified by a single
+    incidental value. Two layouts separated only by one hex colour were one
+    cosmetic edit away from colliding, which makes a guard that fires on nothing
+    and misses a real convergence.
     """
     traits: set[str] = set()
 
     for match in re.finditer(r"\\usepackage(?:\[[^\]]*\])?\{([^}]*)\}", template):
         for package in match.group(1).split(","):
             traits.add(f"pkg:{package.strip()}")
+
+    # The geometry *values*, not just the fact that the package is loaded.
+    #
+    # ``pkg:geometry`` was identical across all ten layouts, so the margins --
+    # the thing that actually decides how much text fits on the page -- were
+    # never compared. Two layouts sharing every package, colour and font but
+    # differing in margin would have been reported as the same document.
+    for match in re.finditer(r"\\usepackage\[([^\]]*)\]\{geometry\}", template):
+        options = match.group(1)
+        for option in options.split(","):
+            key, _, value = option.partition("=")
+            key = key.strip().casefold()
+            value = value.strip().casefold()
+            if key and value:
+                traits.add(f"margin:{key}={value}")
+
+    # The body type size. This is what separates a dense ATS layout from an airy
+    # one, and the existing name-size traits only covered the name block.
+    for match in re.finditer(r"\\documentclass\[(?:11pt|12pt|10pt|9pt)", template):
+        traits.add(f"class:{match.group(0).rsplit('[', 1)[-1]}")
+
+    # The document measure, when the template pins one. A two-column measure and
+    # a full-width one produce very different pages from identical text.
+    for match in re.finditer(r"\\setlength\{\\textwidth\}\{([^}]*)\}", template):
+        traits.add(f"measure:{match.group(1).strip().casefold()}")
 
     for match in re.finditer(r"\\definecolor\{(\w+)\}\{HTML\}\{([0-9A-Fa-f]{6})\}", template):
         traits.add(f"colour:{match.group(1)}={match.group(2).upper()}")

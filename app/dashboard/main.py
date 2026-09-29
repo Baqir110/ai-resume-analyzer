@@ -57,12 +57,7 @@ NAV_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         "Workflow",
         (
             ("overview", "◈  Overview"),
-            ("resume", "1  Resume"),
-            ("job_input", "2  Job Description"),
-            ("ats_analysis", "3  ATS Analysis"),
-            ("optimization", "4  Optimisation"),
-            ("cv_generator", "5  CV Generation"),
-            ("pdf_preview", "6  PDF Preview"),
+            ("cv_workflow", "1–6  CV Workflow"),
         ),
     ),
     (
@@ -206,6 +201,16 @@ def _render(page: str) -> None:
         from app.dashboard.views.overview import render_overview_page
 
         render_overview_page()
+    elif page == "cv_workflow":
+        from app.dashboard.views.workflow_page import render_workflow_page
+
+        render_workflow_page()
+
+    # -- stage deep links -------------------------------------------------
+    # These are no longer navigation entries: the six stages are sections of the
+    # CV workflow page. They stay dispatchable so a link to a single stage still
+    # resolves, and so a stage opened on its own renders with its own page
+    # treatment rather than in the inline form.
     elif page == "resume":
         from app.dashboard.views.inputs import render_resume_step
 

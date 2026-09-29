@@ -13,6 +13,8 @@ visible to the user instead of invisible.
 A rejected document is never presented as a success. If validation reports a
 problem, the download is still offered -- the user may want to look at what went
 wrong -- but it is labelled as rejected and the problems are listed above it.
+
+New: Shows the final ATS score after PDF generation and validation.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ import streamlit as st
 
 from app.dashboard import theme, workflow
 from app.dashboard.components import clear_result, get_result, store_result
-from app.dashboard.helpers import get_api_base, validate_pdf
+from app.dashboard.helpers import get_api_base, validate_ats, validate_pdf
 
 #: Result keys this page understands, in the order they are offered.
 _OUTPUTS = (
@@ -156,6 +158,231 @@ def _render_report(report: dict) -> None:
             st.error(problem.replace("_", " "))
 
 
+def _run_final_ats(api_base: str, pdf_bytes: bytes) -> None:
+    """
+    Score the finished document.
+
+    This is the step the first score could not take. Before generation there is no
+    PDF, so the PDF Parsing check is reported as unmeasured and its weight is
+    redistributed — the score is honest, but it is not the same measurement.
+    Running it against the real bytes is what makes the number a final one, so the
+    two results are stored under different keys and never conflated.
+    """
+    clear_result("final_ats")
+    job_desc = workflow.get_job().strip()
+    if not job_desc:
+        st.warning("Add a job description before scoring the generated document.")
+        return
+
+    analysis = workflow.get_analysis() or {}
+    expected_text = analysis.get("resume_text") or ""
+
+    with st.spinner("Checking the generated document…"):
+        response, meta = validate_ats(
+            api_base,
+            pdf_bytes,
+            job_desc,
+            expected_text=expected_text,
+            layout=workflow.get_layout(),
+        )
+
+    if response is None or not (200 <= response.status_code < 300):
+        detail = meta.get("error") if isinstance(meta, dict) else "the request failed"
+        st.error(f"Could not score the generated document: {detail}")
+        return
+
+    store_result("final_ats", response.json())
+    # The pre-generation score is deliberately kept: the two are different
+    # measurements, and requirement 33 asks for both to be visible.
+    st.rerun()
+
+
+def _render_final_ats(
+    api_base: str,
+    pdf_bytes: bytes | None,
+    *,
+    compact: bool = False,
+) -> None:
+    """
+    Show the before / final comparison and the document's verdict.
+
+    Requirement 31's output: the layout used, the final score, whether the PDF is
+    valid, the page count, and how many issues remain — followed by the three
+    things the user can actually do about any of it.
+    """
+    analysis = workflow.get_analysis() or {}
+    breakdown = analysis.get("ats_breakdown") or {}
+    first_score = breakdown.get("ats_score")
+    if first_score is None:
+        first_score = analysis.get("ats_match_score")
+
+    final = get_result("final_ats")
+    theme.rule()
+    theme.section_header("Final check", "🏁")
+
+    if not final:
+        st.caption(
+            "The first score could not check the document itself, because there was "
+            "no document yet. Scoring the generated PDF switches those checks on."
+        )
+        if pdf_bytes and st.button(
+            "🏁 Check the generated CV", type="primary", key="final_ats_run"
+        ):
+            _run_final_ats(api_base, pdf_bytes)
+        return
+
+    final_score = final.get("ats_score")
+    document = final.get("document") or {}
+    layout = final.get("layout") or {}
+    pdf_check = final.get("pdf_parsing") or {}
+
+    # Requirement 33 asks for the whole progression — before, after optimisation,
+    # final — to be visible at once. The "after" figure is produced on the
+    # optimisation page, so without this it is a number the user has already
+    # navigated away from. The three are shown together here, and the "after" is
+    # only claimed when the loop actually ran.
+    optimised_score = (get_result("improvement_result") or {}).get("final_score")
+
+    def _card(label: str, value, note: str) -> None:
+        theme.value_card(
+            label,
+            f"{value:.0f}/100" if isinstance(value, (int, float)) else "—",
+            note,
+        )
+
+    columns = st.columns(4 if isinstance(optimised_score, (int, float)) else 3)
+
+    with columns[0]:
+        _card("Before", first_score, "your CV as written")
+    with columns[1]:
+        _card(
+            "After optimisation",
+            optimised_score,
+            "safe changes only" if isinstance(optimised_score, (int, float)) else "not run yet",
+        )
+    with columns[2]:
+        _card("Final", final_score, final.get("band") or "")
+
+    with columns[-1] if len(columns) > 3 else columns[2]:
+        if isinstance(final_score, (int, float)) and isinstance(first_score, (int, float)):
+            delta = final_score - first_score
+            theme.value_card(
+                "Total change",
+                f"{delta:+.1f}",
+                "the document is measured too now" if delta else "no change",
+            )
+        else:
+            theme.value_card("Total change", "—", "")
+
+    if isinstance(optimised_score, (int, float)) and optimised_score == first_score:
+        st.caption(
+            "The optimisation step made no change. The remaining gap needs skills or "
+            "qualifications the CV does not contain, and nothing was invented to close it."
+        )
+
+    # -- the document's verdict -----------------------------------------
+    v1, v2, v3 = st.columns(3)
+    with v1:
+        valid = bool(document.get("valid"))
+        theme.value_card("PDF", "Valid" if valid else "Needs work", "" if valid else "see below")
+    with v2:
+        pages = document.get("pages")
+        theme.value_card("Pages", str(pages) if pages is not None else "—", "")
+    with v3:
+        theme.value_card("ATS issues", str(final.get("ats_issues", 0)), "things to look at")
+
+    if layout.get("name"):
+        theme.kv_table(
+            [
+                ("Layout used", layout.get("name")),
+                (
+                    "ATS safety",
+                    f"{layout.get('ats_safety')} ({layout.get('ats_safety_score')}/100)",
+                ),
+                ("Structure", layout.get("structure")),
+                ("Parsing risk", layout.get("parsing_risk")),
+            ]
+        )
+    elif layout.get("requested") and not layout.get("known"):
+        st.caption(layout.get("detail") or "That layout is not one the generator has.")
+
+    # -- the readability checks, in plain language ----------------------
+    if pdf_check.get("failed_checks"):
+        theme.section_header("What the document needs", "🔧")
+        for check in pdf_check.get("checks") or []:
+            if check.get("passed"):
+                continue
+            st.markdown(f"- **{check.get('name', '')}** — {check.get('detail', '')}")
+    elif pdf_check.get("measured"):
+        theme.pills([(theme.PASSED, "every readability check passed on the generated document")])
+
+    for problem in document.get("problems") or []:
+        st.error(str(problem).replace("_", " "))
+
+    if final.get("summary"):
+        st.caption(final["summary"])
+
+    # -- what to do next -------------------------------------------------
+    # "Improve ATS score" leads to a stage further up this same page when inline,
+    # so offering it as a navigation button would be a way to scroll backwards.
+    # "Use this CV" stays either way -- it is an action, not a destination.
+    theme.rule()
+    theme.section_header("What next?", "➡️")
+
+    if compact:
+        b1, b2 = st.columns(2)
+        with b1:
+            st.success("This is the document you generated. Download it above.")
+        with b2:
+            if st.button("🎨 Change layout", key="final_relayout_inline", width="stretch"):
+                st.session_state[workflow.KEY_PAGE] = "layout_picker"
+                st.rerun()
+    else:
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            if st.button("🔧 Improve ATS score", key="final_improve", width="stretch"):
+                st.session_state[workflow.KEY_PAGE] = "optimization"
+                st.rerun()
+        with b2:
+            if st.button("✅ Use this CV", key="final_accept", width="stretch"):
+                st.success("This is the document you generated. Download it below.")
+        with b3:
+            if st.button("🎨 Change layout", key="final_relayout", width="stretch"):
+                st.session_state[workflow.KEY_PAGE] = "layout_picker"
+                st.rerun()
+
+    with st.expander("🔧 Technical breakdown", expanded=False):
+        rows = []
+        for name, data in (final.get("breakdown", {}).get("categories") or {}).items():
+            label = data.get("label") or name
+            if data.get("not_measured"):
+                rows.append(
+                    {
+                        "Category": label,
+                        "Score": "not measured",
+                        "Weight": f"{data.get('weight', 0) * 100:.0f}%",
+                        "Points": "—",
+                        "Lost": "—",
+                    }
+                )
+                continue
+            rows.append(
+                {
+                    "Category": label,
+                    "Score": f"{data.get('score', 0):.1f}/100",
+                    "Weight": f"{data.get('weight', 0) * 100:.0f}%",
+                    "Points": f"{data.get('weighted_points', 0):.1f}",
+                    "Lost": f"{data.get('points_lost', 0):.1f}",
+                }
+            )
+        if rows:
+            st.dataframe(rows, width="stretch", hide_index=True)
+        st.caption(
+            "Every number here comes from a check that ran. Nothing is estimated, "
+            "and nothing is adjusted to make the total look better."
+        )
+
+
 def _pdf_viewer(pdf_bytes: bytes) -> None:
     """
     Embed the PDF, falling back to a download when the browser cannot.
@@ -245,12 +472,13 @@ def _outputs_panel() -> None:
     )
 
 
-def render_pdf_preview() -> None:
+def render_pdf_preview(*, compact: bool = False) -> None:
     """Render the PDF preview and validation page."""
-    theme.step_header(
+    workflow.section_header(
         "👁",
         "PDF Preview & Validation",
         "What was generated, and what was actually checked about it.",
+        compact=compact,
     )
 
     api_base = get_api_base()
@@ -259,12 +487,16 @@ def render_pdf_preview() -> None:
     theme.rule()
 
     pdf_result = get_result("pdf")
+    pdf_bytes: bytes | None = None
     if pdf_result:
         payload = pdf_result.get("content")
         if isinstance(payload, (bytes, bytearray)) and payload:
-            _validation_panel(api_base, bytes(payload))
+            pdf_bytes = bytes(payload)
+            _validation_panel(api_base, pdf_bytes)
         else:
             theme.empty_state("No PDF content", "The stored PDF result has no bytes.", icon="📄")
+    elif compact:
+        st.caption("📄 No PDF yet — generate one above and it appears here.")
     else:
         theme.empty_state(
             "No PDF yet",
@@ -276,6 +508,8 @@ def render_pdf_preview() -> None:
         if st.button("← Go to CV generation"):
             st.session_state[workflow.KEY_PAGE] = "cv_generator"
             st.rerun()
+
+    _render_final_ats(api_base, pdf_bytes, compact=compact)
 
     theme.rule()
     theme.section_header("Performance", "⏱️")
@@ -320,6 +554,9 @@ def _performance_panel(api_base: str) -> None:
 
 
 def clear_pdf_state() -> None:
-    """Drop the generated files and the validation report."""
-    for key in ("pdf", "tex", "docx", "pdf_validation"):
+    """Drop the generated files and everything derived from them."""
+    # "final_ats" has to go with them: it scored *these* bytes, so leaving it
+    # beside a newly generated document would show a verdict for a CV the user
+    # is no longer looking at.
+    for key in ("pdf", "tex", "docx", "pdf_validation", "final_ats"):
         clear_result(key)

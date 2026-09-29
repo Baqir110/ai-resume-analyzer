@@ -1,4 +1,4 @@
-# app/services/suggestions.py
+# app/services/analysis/suggestions.py
 
 # Only these prefixes represent actionable edits the LLM can apply.
 _ACTIONABLE_PREFIXES = (
@@ -26,29 +26,37 @@ def generate_recommendations(
 ) -> list[str]:
     """
     Generates actionable advice to achieve 100% ATS score compliance.
+
+    User-friendly language (requirement 32): simple, clear, actionable.
+    No ATS jargon without explanation.
     """
     recommendations = []
 
     # 1. Tiered ATS Match Score Feedback
     if ats_score < 40.0:
         recommendations.append(
-            "CRITICAL MATCH GAP: Match score is low. Explicitly weave missing target frameworks and operational tools directly into your primary job bullet points."
+            "CRITICAL MATCH GAP: Your CV has significant gaps compared to the job description. "
+            "Focus on adding relevant skills and experience that you actually have."
         )
     elif ats_score < 60.0:
         recommendations.append(
-            "MODERATE MATCH GAP: Core technical terms are missing. Contextualize key tools within project outcomes across your experience section."
+            "MODERATE MATCH GAP: Some key skills are missing. "
+            "Add relevant keywords from the job description where supported by your actual experience."
         )
     elif ats_score < 75.0:
         recommendations.append(
-            "GOOD ALIGNMENT: Strong baseline match. To reach 100%, list specialized secondary skills in both the Technical Skills list and job descriptions."
+            "GOOD ALIGNMENT: Your CV matches the job well. "
+            "To improve further, ensure all relevant skills are clearly listed."
         )
     elif ats_score < 90.0:
         recommendations.append(
-            "HIGH ALIGNMENT: Excellent match! Ensure target skills appear near strong action verbs in accomplishment bullets alongside quantifiable metrics."
+            "HIGH ALIGNMENT: Excellent match! "
+            "Make sure your key skills appear near strong action verbs in your experience section."
         )
     else:
         recommendations.append(
-            "OUTSTANDING ATS MATCH: 100% Optimization reached! Keep document layout single-column and free of tables, headers/footers, or complex graphics."
+            "OUTSTANDING ATS MATCH: Your CV is highly compatible with the job description. "
+            "Keep the document layout single-column and free of tables or complex graphics."
         )
 
     # 2. Precise Keyword Injection Plan
@@ -56,10 +64,11 @@ def generate_recommendations(
         top_missing = missing_skills[:7]
         skills_str = ", ".join(top_missing)
         recommendations.append(
-            f"KEYWORD INJECTION: Explicitly add these terms to both Technical Skills and Experience entries: {skills_str}."
+            f"KEYWORD INJECTION: Consider adding these terms to your CV: {skills_str}. "
+            "Only add skills you actually have experience with."
         )
         recommendations.append(
-            "VERIFICATION: After editing, scan your CV to confirm every skill from the job description appears at least once. Use the ATS score tool to validate."
+            "VERIFICATION: After editing, scan your CV to confirm every skill from the job description appears at least once."
         )
     else:
         recommendations.append(
@@ -68,7 +77,8 @@ def generate_recommendations(
 
     # 3. Structural & Parsing Rules for 100% Compliance
     recommendations.append(
-        "FORMATTING RULE FOR 100% ATS COMPLIANCE: Use standard headings (e.g., 'Work Experience', 'Technical Skills', 'Education'). Avoid tables, text boxes, or dual-column sidebar layouts that split text flow."
+        "FORMATTING RULE: Use standard headings (e.g., 'Work Experience', 'Technical Skills', 'Education'). "
+        "Avoid tables, text boxes, or dual-column layouts that may confuse ATS systems."
     )
 
     return recommendations

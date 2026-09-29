@@ -48,6 +48,8 @@ KEY_LAYOUT = "cv_layout"
 KEY_PROVIDER = "provider"
 KEY_MODEL = "model_name"
 KEY_ROUTE = "route_mode"
+KEY_RECOMMENDED_LAYOUT = "recommended_layout"
+KEY_IMPROVEMENT_RESULT = "improvement_result"
 
 #: The formats the backend accepts. Declared once: the backend rejects anything
 #: else with a 400, so a client-side list that drifts only produces a confusing
@@ -72,6 +74,8 @@ def ensure_defaults() -> None:
     st.session_state.setdefault(KEY_PROVIDER, "ollama")
     st.session_state.setdefault(KEY_MODEL, "")
     st.session_state.setdefault(KEY_ROUTE, "direct")
+    st.session_state.setdefault(KEY_RECOMMENDED_LAYOUT, None)
+    st.session_state.setdefault(KEY_IMPROVEMENT_RESULT, None)
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +219,80 @@ def get_layout() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Section rendering, shared by the standalone pages and the single-page workflow
+# ---------------------------------------------------------------------------
+#
+# Each stage used to be a page of its own, so a stage that could not run yet
+# rendered a full-screen empty state with a button that navigated somewhere else.
+# The six stages now share one page, where that button is meaningless — the
+# inputs the stage needs are further up the same scroll. These two helpers let a
+# stage express the same rule in both places without each one re-deriving it:
+#
+#   section_header(...)  the page title when standalone, nothing when inline,
+#                        because the step rail already names the section
+#   blocked(...)         a one-line "still needs X" when inline, a full empty
+#                        state with a way out when standalone
+#
+# Both return a value the caller acts on, so a stage cannot forget the check.
+
+
+def section_header(
+    number: int | str,
+    title: str,
+    subtitle: str = "",
+    *,
+    compact: bool = False,
+) -> None:
+    """
+    The header for one stage.
+
+    Suppressed when ``compact`` is set, because on the single-page workflow the
+    rail at the top already says which stage this is, and six repeated titles
+    stacked down the page is exactly the noise the single page is meant to remove.
+    """
+    if compact:
+        return
+
+    from app.dashboard import theme
+
+    theme.step_header(number, title, subtitle)
+
+
+def blocked(
+    ready: bool,
+    *,
+    missing: str,
+    action: str = "",
+    page: str = "",
+    icon: str = "🚧",
+    compact: bool = False,
+) -> bool:
+    """
+    Report that a stage cannot run yet. Returns True when the caller must stop.
+
+    Standalone, this is a full empty state plus a button to go and fix it, which
+    is all a user of a single page can do. Inline, the same message is one line
+    and no button: the thing being asked for is visible further up the same
+    page, so a button that "goes" to it would only move the scroll the wrong way.
+    """
+    if ready:
+        return False
+
+    from app.dashboard import theme
+
+    if compact:
+        st.caption(f"{icon} Waiting for {missing}.")
+        return True
+
+    theme.empty_state("Not ready yet", missing, action=action or None, icon=icon)
+    if page:
+        if st.button(f"Go to {action or page}", key=f"blocked_{page}_{missing[:12]}"):
+            st.session_state[KEY_PAGE] = page
+            st.rerun()
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Readiness
 # ---------------------------------------------------------------------------
 
@@ -269,7 +347,15 @@ def reset_workflow() -> None:
     st.session_state[KEY_ANALYSIS_META] = None
     st.session_state[KEY_CV_META] = None
 
-    for key in ("analysis", "docx", "pdf", "tex", "pdf_validation"):
+    for key in (
+        "analysis",
+        "docx",
+        "pdf",
+        "tex",
+        "pdf_validation",
+        "final_ats",
+        "improvement_result",
+    ):
         clear_result(key)
 
 

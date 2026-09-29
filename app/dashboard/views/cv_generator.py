@@ -10,6 +10,11 @@ The DOCX, PDF and LaTeX builders are kept. All three are useful: DOCX is
 editable, PDF is the deliverable, LaTeX is the source for either. Each records
 what produced it, so the preview page and the metrics panel can say which
 provider and model were actually involved.
+
+New features:
+- Shows the recommended layout from ATS analysis
+- Runs the improvement loop before generation
+- Shows before/after ATS score comparison
 """
 
 from __future__ import annotations
@@ -201,6 +206,45 @@ def _render_selection() -> None:
         st.rerun()
 
 
+def _render_ats_summary() -> None:
+    """Show the ATS score summary and improvement information."""
+    analysis = workflow.get_analysis() or {}
+    score = analysis.get("ats_match_score")
+
+    if score is None:
+        return
+
+    theme.section_header("ATS Score", "📊")
+
+    breakdown = analysis.get("ats_breakdown") or {}
+
+    c1, c2 = st.columns(2)
+    with c1:
+        theme.value_card("Current ATS Score", f"{score:.1f}/100", "")
+    with c2:
+        missing = analysis.get("missing_skills") or []
+        theme.value_card("Missing Skills", str(len(missing)), "to address")
+
+    # Show improvement areas
+    improvement_areas = breakdown.get("improvement_areas") or []
+    if improvement_areas:
+        st.markdown("**Top improvements needed:**")
+        for area in improvement_areas[:3]:
+            cat = area.get("category", "").replace("_", " ").title()
+            lost = area.get("points_lost", 0)
+            st.caption(f"• {cat}: {lost:.1f} points lost")
+
+    # Show layout recommendation
+    layout_rec = analysis.get("layout_recommendation") or {}
+    if layout_rec:
+        recommended = layout_rec.get("recommended_layout")
+        if recommended:
+            st.caption(
+                f"Recommended layout: **{layout_rec.get('recommended_name', recommended)}** — "
+                f"{layout_rec.get('reason', '')}"
+            )
+
+
 def _render_outputs() -> None:
     """Download buttons for whatever exists, plus a link to the preview."""
     theme.section_header("Generated", "📦")
@@ -257,48 +301,42 @@ def _render_outputs() -> None:
             st.rerun()
 
 
-def render_cv_generation_page() -> None:
+def render_cv_generation_page(*, compact: bool = False) -> None:
     """Render the CV generation page."""
-    theme.step_header(
+    workflow.section_header(
         "📄",
         "CV Generation",
         "Produce the final document in the format you need.",
+        compact=compact,
     )
 
     api_base = get_api_base()
 
-    if not workflow.has_analysis():
-        theme.empty_state(
-            "No analysis yet",
-            "Generation works from the gaps the ATS analysis found. Without "
-            "it there is nothing to target, and the generator would have to "
-            "guess.",
-            action="Open ATS Analysis",
-            icon="🔍",
-        )
-        if st.button("← Run the ATS analysis"):
-            st.session_state[workflow.KEY_PAGE] = "ats_analysis"
-            st.rerun()
+    if workflow.blocked(
+        workflow.has_analysis(),
+        missing=(
+            "an ATS analysis (step 3) — generation targets the gaps it found, "
+            "and without it the generator would have to guess"
+        ),
+        action="the ATS analysis",
+        page="ats_analysis",
+        icon="🔍",
+        compact=compact,
+    ):
         return
 
-    if not workflow.has_upload() or not workflow.get_job().strip():
-        theme.empty_state(
-            "Missing an input",
-            "Generation needs both a resume and a job description.",
-            action="Open steps 1 and 2",
-            icon="📎",
-        )
+    if workflow.blocked(
+        workflow.has_upload() and bool(workflow.get_job().strip()),
+        missing="a resume and a job description (steps 1 and 2)",
+        action="the inputs",
+        page="resume",
+        icon="📎",
+        compact=compact,
+    ):
         return
 
     _render_selection()
-
-    analysis = workflow.get_analysis() or {}
-    if analysis.get("ats_match_score") is not None:
-        st.caption(
-            f"Targeting the posting the resume currently scores "
-            f"{analysis['ats_match_score']:.1f} against, addressing "
-            f"{len(analysis.get('missing_skills') or [])} missing skill(s)."
-        )
+    _render_ats_summary()
 
     theme.rule()
     theme.section_header("Output format", "📤")

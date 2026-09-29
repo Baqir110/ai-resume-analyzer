@@ -253,40 +253,43 @@ def _recent_generation(api_base: str) -> None:
 
 def _workflow_progress() -> None:
     """
-    The four inputs, and where to go next.
+    How far along the workflow is, and the one way into it.
 
-    Derived from the shared readiness map rather than re-checked here, so the
-    overview cannot disagree with the pages about what is missing.
+    This used to be four cards with an "Open" button each, pointing at four
+    separate pages. The stages are now sections of one page, so a row of
+    navigation buttons here would be a row of ways to scroll — which is what the
+    workflow page's own progress rail is for. What is left here is the summary
+    worth having on a page someone might land on without intending to work: how
+    far along they are, and a single way in.
+
+    The stage list is imported from the workflow page rather than restated, so
+    the two cannot drift apart about what the stages are.
     """
+    from app.dashboard.views.workflow_page import STAGES, stage_state
+
     theme.section_header("Workflow", "🧭")
 
     ready = workflow.workflow_readiness()
-    page, action = workflow.next_step()
+    states = [stage_state(index, ready) for index in range(len(STAGES))]
 
-    steps = [
-        ("1", "Resume", ready["resume"], "resume"),
-        ("2", "Job description", ready["job_description"], "job_input"),
-        ("3", "ATS analysis", ready["analysis"], "ats_analysis"),
-        ("4", "CV generation", ready["generation"], "cv_generator"),
-    ]
+    done = sum(1 for state in states if state != "pending")
+    labels = " · ".join(
+        f"{number}. {label}{'' if state == 'pending' else ' ✓'}"
+        for (number, label, _key, _glyph), state in zip(STAGES, states)
+    )
 
-    cols = st.columns(4)
-    for column, (number, title, done, key) in zip(cols, steps):
-        with column:
-            theme.value_card(
-                f"{number}. {title}",
-                "DONE" if done else "PENDING",
-                "" if done else "not started",
-            )
-            if st.button(
-                "Open" if not done else "Reopen",
-                key=f"overview_open_{key}",
-                width="stretch",
-                disabled=key == "cv_generator" and not ready["generation"],
-            ):
-                st.session_state[workflow.KEY_PAGE] = key
-                st.rerun()
+    theme.value_card("Progress", f"{done} of {len(STAGES)} steps", labels)
 
+    if st.button(
+        "Open the CV workflow →",
+        type="primary",
+        key="overview_open_workflow",
+        width="stretch",
+    ):
+        st.session_state[workflow.KEY_PAGE] = "cv_workflow"
+        st.rerun()
+
+    _page, action = workflow.next_step()
     theme.rule()
     st.markdown(
         theme.status_pill(
@@ -295,26 +298,59 @@ def _workflow_progress() -> None:
         ),
         unsafe_allow_html=True,
     )
+    st.caption(
+        "Every stage is on that one page, top to bottom. Nothing here needs "
+        "choosing between steps."
+    )
 
     if workflow.has_analysis():
         analysis = workflow.get_analysis() or {}
-        score = analysis.get("ats_match_score")
+        breakdown = analysis.get("ats_breakdown") or {}
+        # The breakdown's own score when present, so this page and the ATS page
+        # cannot report different numbers for the same run.
+        score = breakdown.get("ats_score")
+        if score is None:
+            score = analysis.get("ats_match_score")
+
         if score is not None:
-            a1, a2, a3 = st.columns(3)
-            with a1:
-                theme.value_card("ATS score", f"{score:.1f}", "against the posting")
-            with a2:
+            # Requirement 34: a score and a route, not the diagnostics. The band
+            # is read from the backend rather than recomputed here, so the two
+            # pages cannot drift apart on where the thresholds sit.
+            theme.section_header("ATS score", "📊")
+
+            o1, o2 = st.columns([1, 2])
+            with o1:
                 theme.value_card(
-                    "Matching skills",
-                    str(len(analysis.get("matching_skills") or [])),
-                    "",
+                    "ATS Compatibility",
+                    f"{score:.0f}/100",
+                    breakdown.get("band") or "see the analysis for detail",
                 )
-            with a3:
-                theme.value_card(
-                    "Missing skills",
-                    str(len(analysis.get("missing_skills") or [])),
-                    "",
+            with o2:
+                gap_count = len(analysis.get("missing_skills") or [])
+                if gap_count:
+                    st.caption(
+                        f"{gap_count} term(s) from the posting are not in your CV. "
+                        "The analysis page lists them, with what to do about each."
+                    )
+                else:
+                    st.caption("Every term the analysis found in the posting is in your CV.")
+
+                layout_rec = analysis.get("layout_recommendation") or {}
+                recommended = layout_rec.get("recommended_name") or layout_rec.get(
+                    "recommended_layout"
                 )
+                if recommended:
+                    st.caption(f"Recommended layout: **{recommended}**")
+
+            o3, o4 = st.columns(2)
+            with o3:
+                if st.button("🔍 See the full analysis", width="stretch"):
+                    st.session_state[workflow.KEY_PAGE] = "ats_analysis"
+                    st.rerun()
+            with o4:
+                if st.button("📄 Generate CV", type="primary", width="stretch"):
+                    st.session_state[workflow.KEY_PAGE] = "cv_generator"
+                    st.rerun()
 
 
 def render_overview_page() -> None:

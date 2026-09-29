@@ -156,7 +156,26 @@ def test_env_example_explains_the_shim_window(env_example):
 
 def test_env_example_names_the_smoke_test(env_example):
     assert "scripts.llm_smoke" in env_example
-    assert "scripts.doctor" in env_example
+
+
+def test_every_script_env_example_recommends_exists(env_example):
+    """
+    A recommended command has to run.
+
+    ``.env.example`` points users at scripts to verify their setup. A reference
+    to a script that has been deleted is worse than no reference: the user types
+    it, gets a module-not-found traceback, and concludes their configuration is
+    broken. This asserts the referenced modules are on disk, so removing a script
+    without clearing its documentation is a test failure.
+    """
+    referenced = set(re.findall(r"scripts\.([A-Za-z0-9_]+)", env_example))
+
+    assert referenced, "no script referenced; the fixture is not testing anything"
+
+    missing = sorted(
+        name for name in referenced if not (ROOT / "scripts" / f"{name}.py").is_file()
+    )
+    assert not missing, f".env.example recommends scripts that do not exist: {missing}"
 
 
 # ===========================================================================
@@ -421,17 +440,42 @@ def test_status_table_marks_untested_rows_explicitly(readme):
 
 def test_readme_documents_the_dashboard_workflow(readme):
     """
-    The dashboard is a guided workflow now, and the README says so.
+    The dashboard is one workflow page, and the README says which stages it has.
+
+    The expected stage names are read from the application rather than written
+    out here, so renaming a stage fails this test instead of quietly leaving the
+    README describing a workflow the app no longer has. That is the drift this
+    file exists to catch: a real page name and a documented one drifting apart
+    with no error anywhere.
     """
-    assert "### Guided Dashboard" in readme
-    for page in (
-        "Overview",
-        "ATS analysis",
-        "Optimisation",
-        "CV generation",
-        "PDF preview",
+    from app.dashboard.views.workflow_page import STAGES
+
+    assert "### One-Page CV Workflow" in readme
+
+    for _number, label, _key, _glyph in STAGES:
+        assert label in readme, f"undocumented workflow stage: {label}"
+
+    # The other navigation entry, and the configuration pages that are
+    # deliberately not stages of the workflow.
+    for page in ("Overview", "layout", "diagnostics"):
+        assert page.casefold() in readme.casefold(), page
+
+
+def test_readme_does_not_describe_the_old_multi_page_workflow(readme):
+    """
+    The six-page description is gone from the README, not just supplemented.
+
+    The old text could survive an edit that adds the new section without
+    removing the old one, leaving the README describing two different dashboards
+    at once. This asserts the specific thing that has changed rather than the
+    general claim, so it fails on the stale sentence instead of on a rewording.
+    """
+    for stale in (
+        "### Guided Dashboard",
+        "Overview → Resume",
+        "Continue to job description",
     ):
-        assert page in readme, page
+        assert stale not in readme, f"README still describes the old page flow: {stale!r}"
 
 
 def test_readme_explains_the_dashboard_status_vocabulary(readme):

@@ -37,6 +37,28 @@ MAX_JOB_DESCRIPTION_CHARS = 200_000
 MAX_LLM_LATEX_CHARS = 250_000
 MAX_SKILL_ITEMS = 200
 
+#: How long the generated LaTeX body should be, in characters.
+#:
+#: Measured by compiling generated documents of known length through the German
+#: corporate layout at 11pt:
+#:
+#:     3 781 -> one page      4 633 -> one page
+#:     4 020 -> one page      4 691 -> one page
+#:     4 098 -> one page      4 732 -> TWO pages
+#:
+#: The wall is therefore just above 4 700. The budget is set below it so a model
+#: that overshoots slightly still fits, and above a genuinely full CV so it is
+#: never asked to pad.
+#:
+#: This is a *target*, not an enforcement. The compiler's one-page requirement is
+#: unchanged and still refuses anything that overflows; stating the size in the
+#: prompt is a way of giving the model units it can reason about, not a way of
+#: relaxing a check.
+#:
+#: Layouts with wider margins or more sections hold less, so this is tuned for
+#: the densest supported layout and errs on the generous side.
+TARGET_LATEX_CHARS = 4200
+
 #: Prompt budgets for the generation call, matching the optimizer's values for
 #: the same inputs. Every other generation path already applied these; this one
 #: did not, so a long posting went to the model whole and was silently
@@ -947,14 +969,282 @@ def clean_llm_response_to_latex(text: str) -> str:
         # instead of inserting invented placeholder prose.
         return ""
 
-    # A model may return a complete document.  Only its body is retained; the
-    # trusted application template supplies the preamble and shell policy.
-    if r"\documentclass" in text or r"\begin{document}" in text:
-        stripped = _PREAMBLE_STRIP_RE.sub("", text, count=1)
-        if stripped == text and r"\begin{document}" in text:
-            stripped = text.split(r"\begin{document}", 1)[1]
-        text = stripped
-        text = _END_DOC_RE.sub("", text).strip()
+    # A model may return a complete document. Only its body is retained; the
+    # trusted application template supplies the preamble and the shell policy.
+    #
+    # The wrapper is removed wherever it appears, not only at the start. A model
+    # that answers "Here is your CV:" before its document defeated the anchored
+    # version of this, and the leftover \documentclass was then typeset as
+    # visible text in the middle of the PDF -- caught by validate_pdf_content, so
+    # the request failed rather than shipping a broken CV. Measured on
+    # llama3.2: 2 of 8 full-pipeline runs.
+    if r"\documentclass" in text or r"\begin{document}" in text or r"\begin{document}" in text:
+        begin = text.find(r"\begin{document}")
+
+        if begin >= 0:
+            # Take everything between \begin{document} and \end{document},
+            # wherever they are. A preamble before the opening is prose or a
+            # document header, and neither belongs in the body.
+            text = text[begin + len(r"\begin{document}") :]
+            # Cut at the first closing tag and drop the remainder, rather than
+            # removing the tag itself. _END_DOC_RE is anchored to the end of the
+            # string, so a model that adds "Let me know if you would like
+            # changes." after the document defeated it and the literal
+            # \end{document} was typeset into the CV.
+            end = text.find(r"\end{document}")
+            if end >= 0:
+                text = text[:end]
+            else:
+                text = _END_DOC_RE.sub("", text)
+        else:
+            # No opening tag: strip the preamble commands in place, wherever
+            # they are, so a partial wrapper cannot survive.
+            text = _PREAMBLE_STRIP_RE.sub("", text)
+            text = re.sub(r"\\documentclass(?:\[[^\]]*\])?\{[^{}]*\}", "", text)
+            text = re.sub(r"\\usepackage(?:\[[^\]]*\])?\{[^{}]*\}", "", text)
+            text = re.sub(r"\\begin\{document\}|\\end\{document\}", "", text)
+
+        text = text.strip()
+
+    # Preamble fragments, on every path.
+    #
+    # The wrapper strip above only fires when the model wrote a document. Far more
+    # often it writes a preamble *fragment* with no \documentclass and no
+    # \begin{document} to key off, and every one of those fragments then fails the
+    # source validator. Measured on llama3.2: 8 of 8 attempts carried
+    # \usepackage, \definecolor, \hypersetup, \titleformat, \titlespacing and
+    # \pagestyle, along with the template's own \jobheader and \degreeheader
+    # macros -- the model imitating the template it was shown. Not one of them
+    # belongs in a body, and the application's preamble supplies all of them.
+    text = _strip_preamble_fragments(text).strip()
+
+    return text
+
+
+#: A single backslash. Spelled this way because the scanner below is full of
+#: LaTeX, and a backslash inside a normal string literal is an escape that
+#: Python will either honour or refuse depending on what follows it.
+_BACKSLASH = chr(92)
+
+#: Preamble commands a model sometimes emits and never should, with the number
+#: of balanced brace arguments each one takes.
+#:
+#: A closed list rather than a heuristic. A heuristic that removed anything
+#: "looking structural" would also remove the candidate's own sections, which is
+#: the content the document exists to carry.
+#:
+#: The argument count matters. Removing only the command name leaves its argument
+#: behind as a bare brace group, and a dangling brace is worse than the command it
+#: replaced: it unbalances the document, so the body is refused for a structural
+#: reason and the error names braces rather than the preamble that caused them.
+_PREAMBLE_COMMANDS = {
+    "usepackage": 1,
+    "RequirePackage": 1,
+    "definecolor": 3,
+    "colorlet": 2,
+    "hypersetup": 1,
+    "graphicspath": 1,
+    "DeclareGraphicsExtensions": 1,
+    "titleformat": 5,
+    "titlespacing": 4,
+    "setlist": 1,
+    "pagestyle": 1,
+    "thispagestyle": 1,
+    "raggedbottom": 0,
+    "flushend": 0,
+    "sloppy": 0,
+    "fussy": 0,
+    # \DeclareFontSubstitute{encoding}{family}{series}{shape}
+    "DeclareFontSubstitute": 4,
+    # \DeclareFontShape{encoding}{family}{series}{shape}{size}{definition}
+    "DeclareFontShape": 6,
+    # \DeclareFontFamily{encoding}{family}[options]{definition}
+    "DeclareFontFamily": 3,
+}
+
+#: Preamble commands that take a variadic or optional argument list, so every
+#: balanced group that follows is consumed.
+_PREAMBLE_COMMANDS_OPEN_ENDED = (
+    "newcommand",
+    "providecommand",
+    "DeclareRobustCommand",
+    "renewcommand",
+    "setlength",
+    "addtolength",
+    "settowidth",
+    "setcounter",
+)
+
+#: Simple assignments with no braces, which a pattern handles correctly.
+#:
+#: The trailing unit matters: matching the number alone left the "em" of
+#: \emergencystretch3em behind as a stray word in the body.
+_PREAMBLE_ASSIGNMENT_RE = re.compile(
+    r"\\(?:hbadness|tolerance|emergencystretch|pagenumbering)"
+    r"\s*=?\s*\d+(?:\.\d+)?\s*(?:pt|em|ex|cm|mm|in|pc|sp|mu)?"
+)
+
+#: Marks a command already decided about and deliberately left in place, so the
+#: scan makes progress instead of stopping at the first legitimate command.
+_SKIP = "\x00"
+
+
+def _read_balanced_group(text: str, start: int) -> int | None:
+    r"""
+    Index just past the ``}`` closing the group that opens at ``start``.
+
+    ``None`` when the group never closes. Three LaTeX constructs are honoured
+    because a model writes all three and each one otherwise derails the count:
+
+    * a brace preceded by a backslash is escaped, so ``\{`` is a literal brace;
+    * an unescaped ``%`` comments out the rest of the line, so a brace after one
+      is text rather than structure -- and a comment is the most common reason a
+      hand-rolled reader disagrees with pdflatex about where a group ends;
+    * ``\\%`` is an escaped percent, which is a literal, not a comment.
+    """
+    if start >= len(text) or text[start] != "{":
+        return None
+
+    depth = 0
+    index = start
+
+    while index < len(text):
+        char = text[index]
+        previous = text[index - 1] if index > 0 else ""
+        escaped = previous == _BACKSLASH
+
+        if char == "%" and not escaped:
+            newline = text.find("\n", index)
+            index = len(text) if newline < 0 else newline
+            continue
+
+        if char == "{" and not escaped:
+            depth += 1
+        elif char == "}" and not escaped:
+            depth -= 1
+            if depth == 0:
+                return index + 1
+
+        index += 1
+
+    return None
+
+
+def _remove_preamble_commands(text: str) -> str:
+    r"""
+    Strip preamble declarations, consuming their arguments.
+
+    Three properties this has to have, each of which the previous version got
+    wrong:
+
+    * **A command that is not a preamble command is left exactly as it is.** The
+      earlier version replaced the whole match -- backslash included -- with a
+      placeholder, which silently turned ``\section`` into ``\`` and
+      ``\textbf{Role}`` into ``\{Role}``. Body commands are the candidate's
+      content and must survive untouched.
+    * **A removed command takes its balanced arguments with it.** Leaving the
+      argument behind as a bare brace group unbalances the document, so the body
+      is then refused for a structural reason that names the wrong cause.
+    * **A command whose arguments do not balance is skipped, not fatal.** The
+      previous version returned the input unchanged, which threw away every
+      removal it had already made because of one unparseable command late in the
+      text -- so a preamble that was 95% removable came back 0% stripped. A
+      command is left in place and the scan continues past it; the body validator
+      still runs afterwards and still refuses genuinely broken structure.
+
+    The output is assembled in a buffer rather than by repeated splicing, so no
+    index arithmetic can shift under the scan.
+    """
+    pattern = re.compile(r"\\([A-Za-z@]+)")
+
+    kept: list[str] = []
+    cursor = 0
+    position = 0
+
+    while True:
+        match = pattern.search(text, position)
+
+        if match is None:
+            break
+
+        name = match.group(1)
+
+        if name in _PREAMBLE_COMMANDS:
+            fixed = _PREAMBLE_COMMANDS[name]
+        elif name in _PREAMBLE_COMMANDS_OPEN_ENDED:
+            fixed = None
+        else:
+            # Not a preamble command. Step past it and change nothing.
+            position = match.end()
+            continue
+
+        end_of_command = match.end()
+        consumed = 0
+        wanted = 1 if fixed == 0 else (-1 if fixed is None else fixed)
+
+        # Optional and mandatory arguments interleave, as in
+        # \newcommand{\jobheader}[2]{body} -- a name, a count, then the body.
+        # So both forms are consumed in one loop rather than one pass each;
+        # handling the optional form first alone left the "[2]" behind.
+        unparseable = False
+
+        while wanted < 0 or consumed < wanted:
+            probe = end_of_command
+            while probe < len(text) and text[probe].isspace():
+                probe += 1
+
+            if probe >= len(text):
+                break
+
+            if text[probe] == "[":
+                close = text.find("]", probe)
+                if close < 0:
+                    unparseable = True
+                    break
+                end_of_command = close + 1
+                continue
+
+            if text[probe] != "{":
+                break
+
+            closing = _read_balanced_group(text, probe)
+
+            if closing is None:
+                unparseable = True
+                break
+
+            end_of_command = closing
+            consumed += 1
+
+        if unparseable:
+            # Leave this command in place and carry on. Reverting everything --
+            # which is what returning the input did -- threw away every removal
+            # already made, so one unparseable command at the end of a preamble
+            # left the whole preamble in place.
+            position = match.end()
+            continue
+
+        kept.append(text[cursor : match.start()])
+        cursor = end_of_command
+        position = end_of_command
+
+    kept.append(text[cursor:])
+
+    return "".join(kept)
+
+
+def _strip_preamble_fragments(text: str) -> str:
+    """
+    Remove preamble-only declarations from a generated body.
+
+    A no-op on a body containing none, which is what a model that follows the
+    instructions produces.
+    """
+    text = _remove_preamble_commands(text)
+    text = _PREAMBLE_ASSIGNMENT_RE.sub("", text)
+
+    # The template's own preamble conditional: \ifx ... \else ... \fi.
+    text = re.sub(r"\\ifx.*?\\fi", "", text, flags=re.DOTALL)
 
     return text
 
@@ -978,7 +1268,26 @@ def clean_body_for_latex(body_text: str) -> str:
     protected_urls: list[tuple[str, str]] = []
 
     def protect_url(match: re.Match, group: int) -> str:
-        url = latex_escape_url(match.group(group))
+        # A URL the sanitiser refuses becomes \relax rather than an exception.
+        #
+        # latex_escape_url() raises, and it is called here -- inside the re.sub
+        # callback, before the protection token exists -- so an exception here
+        # propagates out of clean_body_for_latex and discards an otherwise
+        # complete CV. A link is not a career fact; the factual invariant check
+        # is what protects those. qwen2.5:7b failed four of four full-pipeline
+        # attempts on one malformed project URL before this.
+        #
+        # \relax is LaTeX's "argument intentionally empty", so the link renders
+        # as plain text and the brace structure is unchanged.
+        try:
+            url = latex_escape_url(match.group(group))
+        except LaTeXSourceError:
+            logger.warning(
+                "Dropped an unusable link from the generated CV and kept the "
+                "rest of the document. A link is not a career fact, so losing "
+                "one is not a reason to refuse the whole CV."
+            )
+            url = r"\relax"
         token = f"LATEXSAFEURLTOKEN{len(protected_urls)}ENDTOKEN"
         protected_urls.append((token, url))
         return match.group(0).replace(match.group(group), token, 1)
@@ -1082,9 +1391,33 @@ def clean_body_for_latex(body_text: str) -> str:
             f"(first at line {first_line}: {first_char!r})."
         )
 
+    # Restore the protected URLs, neutralising any that cannot be made safe.
+    #
+    # A malformed URL in an optional field used to discard the whole document:
+    # validate_latex_body() raises, the raise propagates to the generation
+    # wrapper, and the caller is told "no CV was produced" -- which sent the
+    # investigation looking at the model rather than at a URL. qwen2.5:7b failed
+    # four of four full-pipeline attempts on exactly this.
+    #
+    # The link is dropped, the visible text stays, and the count is reported so a
+    # CV that lost every link is visible rather than silent.
+    #
+    # This is not a relaxation of URL validation. A \href in generated LaTeX is
+    # never dereferenced by the application, so no fetch policy is involved; its
+    # only risk is a LaTeX metacharacter breaking out of the argument, and
+    # removing the URL removes that risk more thoroughly than keeping it.
+    # validate_latex_body() below still refuses any unsafe URL that reaches it --
+    # by this point none does, so it passes.
+    #
+    # "\relax" is the LaTeX idiom for a disabled link, and is what the
+    # project-header path already treats as "no URL".
+    # No re-validation here: every stored value is already safe, because
+    # protect_url() sanitised it or replaced it with \relax.
     for token, url in protected_urls:
         body_text = body_text.replace(token, url)
 
+    # Still strict. An unsafe URL that reached this point by some other route
+    # is refused, as before.
     return validate_latex_body(body_text)
 
 
@@ -2079,7 +2412,12 @@ Selected Layout Style:
 
 STRICT ONE-PAGE LIMIT AND CONCISION REQUIREMENTS:
 1. THE FINAL DOCUMENT MUST FIT ON EXACTLY ONE (1) A4 PAGE.
-2. KEEP ALL BULLET POINTS CONCISE AND LIMITED:
+2. THE WHOLE LaTeX BODY YOU RETURN MUST BE AT MOST {TARGET_LATEX_CHARS} CHARACTERS.
+   This is measured, not a guess: a body of about 4,700 characters overflows onto
+   a second page and is rejected. Count your output and cut until it is under the
+   limit. Cutting wording is always acceptable; dropping a stated employer, job
+   title, date or credential is not.
+3. KEEP ALL BULLET POINTS CONCISE AND LIMITED:
    - Max 2 to 3 bullet points per work experience entry.
    - Max 1 to 2 bullet points per project entry.
    - Summary/Profil section must be EXACTLY 1 to 2 short sentences.

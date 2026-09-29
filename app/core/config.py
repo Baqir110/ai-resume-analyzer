@@ -38,6 +38,25 @@ class Settings(BaseSettings):
     CORS_ALLOW_CREDENTIALS: bool = False
     ALLOWED_FILE_ROOTS: list[str] = ["data"]
     JOB_ALLOWED_HOSTS: list[str] = []
+
+    # Rate limiting.
+    #
+    # Off by default. A limiter that starts refusing a single-user local
+    # deployment is worse than no limiter, and this application is designed to be
+    # run on one machine. Turn it on for any shared deployment.
+    #
+    # On by default, when enabled, is 60 requests a minute per client: generous
+    # for a human driving the dashboard, and comfortably below a free tier's
+    # per-minute token budget for the LLM-backed routes.
+    #
+    # Counters are in memory and per process, so with several workers the
+    # effective limit is this value times the worker count. That is stated rather
+    # than hidden, and a shared store would make the limiter a new thing that can
+    # fail.
+    RATE_LIMIT_ENABLED: bool = False
+    RATE_LIMIT_REQUESTS: int = 60
+    RATE_LIMIT_WINDOW_SECONDS: float = 60.0
+
     # Largest job description the API will accept.
     #
     # This is an input-validation limit, deliberately permissive: rejecting a

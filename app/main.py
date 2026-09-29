@@ -9,6 +9,7 @@ from app.api.jobs import router as jobs_router
 from app.api.new_features_endpoints import router as new_features_router
 from app.api.streaming_endpoints import router as streaming_router
 from app.core.config import settings
+from app.core.rate_limit import RateLimiter, RateLimitSettings
 from app.services.llm.provider import LLMService
 
 app = FastAPI(
@@ -84,6 +85,17 @@ app.add_middleware(
 )
 
 
+#: Shared across requests, so the counters survive between them. Module level
+#: rather than per-app so a test can build its own without reaching into state.
+limiter = RateLimiter(
+    RateLimitSettings(
+        enabled=bool(getattr(settings, "RATE_LIMIT_ENABLED", False)),
+        requests=int(getattr(settings, "RATE_LIMIT_REQUESTS", 60) or 60),
+        window_seconds=float(getattr(settings, "RATE_LIMIT_WINDOW_SECONDS", 60.0) or 60.0),
+    )
+)
+
+
 @app.middleware("http")
 async def limit_request_size(request, call_next):
     """Reject obviously oversized requests before multipart parsing."""
@@ -94,6 +106,52 @@ async def limit_request_size(request, call_next):
     if content_length > int(settings.MAX_REQUEST_BYTES):
         return JSONResponse(status_code=413, content={"detail": "Request body is too large"})
     return await call_next(request)
+
+
+@app.middleware("http")
+async def rate_limit_requests(request, call_next):
+    """
+    Refuse a burst that would spend the configured provider's budget.
+
+    ``API_KEY`` is a shared secret, so there is no per-user identity to enforce a
+    quota against, and every LLM-backed route is metered upstream: a burst here
+    becomes 429s for the legitimate operator a moment later. Measured on this
+    project's own runs, which exhausted a free tier's token bucket in under a
+    minute and then failed their own subsequent requests.
+
+    Off unless ``RATE_LIMIT_ENABLED`` is set, because a limiter that starts
+    rejecting a single-user local deployment is worse than none. The health
+    endpoints are exempt, because a container healthcheck every ten seconds
+    would otherwise trip any limit worth having.
+    """
+    if not limiter.settings.enabled or request.url.path in limiter.settings.exempt_paths:
+        return await call_next(request)
+
+    # Read the key without depending on the auth dependency, which runs later.
+    # An unauthenticated request is still counted, against its address.
+    api_key = request.headers.get("X-API-Key")
+
+    allowed, headers = limiter.check(limiter.client_key(request, api_key))
+
+    if not allowed:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "detail": (
+                    "Rate limit exceeded. This deployment shares one API key, so "
+                    "requests are counted per client. Wait for the window to "
+                    "reset, or raise RATE_LIMIT_REQUESTS."
+                )
+            },
+            headers=headers,
+        )
+
+    response = await call_next(request)
+
+    for header, value in headers.items():
+        response.headers.setdefault(header, value)
+
+    return response
 
 
 @app.middleware("http")

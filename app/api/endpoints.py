@@ -972,6 +972,34 @@ async def analyze_resume(
         resume_text=resume_text,
     )
 
+    # --- New: transparent ATS breakdown ---
+    # Deterministic and local: no model call, so it cannot be the reason a
+    # request is slow, and it cannot be the reason a score is flattering. A
+    # failure here degrades the response to the plain score rather than failing
+    # the analysis, because the score itself was already computed above.
+    try:
+        from app.services.analysis.ats_scoring import (
+            compute_ats_breakdown,
+            generate_user_friendly_suggestions,
+        )
+
+        breakdown = compute_ats_breakdown(resume_text, job_description)
+        results["ats_breakdown"] = breakdown
+        results["ats_suggestions"] = generate_user_friendly_suggestions(
+            breakdown, results.get("missing_skills") or []
+        )
+    except Exception:
+        logger.exception("ATS breakdown computation failed")
+
+    # --- New: layout recommendation ---
+    try:
+        from app.services.analysis.layout_recommender import recommend_layout
+
+        layout_rec = recommend_layout(job_description, resume_text)
+        results["layout_recommendation"] = layout_rec
+    except Exception:
+        logger.exception("Layout recommendation failed")
+
     if results.get("missing_skills"):
         try:
             _layout = auto_select_layout(job_description, resume_text)
@@ -1006,7 +1034,224 @@ async def analyze_resume(
         improvement_suggestions=results["improvement_suggestions"],
         recommendation=results.get("recommendation"),
         resume_text=resume_text,
+        ats_breakdown=results.get("ats_breakdown"),
+        layout_recommendation=results.get("layout_recommendation"),
     )
+
+
+# ============================================================
+# ATS BREAKDOWN (standalone)
+# ============================================================
+
+
+@router.post("/ats-breakdown")
+async def ats_breakdown_endpoint(
+    job_description: str = Form(...),
+    resume_file: UploadFile = File(...),
+):
+    """Get a transparent ATS score breakdown with category sub-scores."""
+    resume_text = await extract_text_from_file(resume_file)
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="Could not extract resume text.")
+
+    from app.services.analysis.ats_scoring import compute_ats_breakdown
+
+    breakdown = await asyncio.to_thread(
+        compute_ats_breakdown,
+        resume_text,
+        job_description,
+    )
+    return {"status": "success", "breakdown": breakdown}
+
+
+# ============================================================
+# LAYOUT RECOMMENDATION
+# ============================================================
+
+
+@router.post("/layout-recommendation")
+async def layout_recommendation_endpoint(
+    job_description: str = Form(...),
+    resume_file: UploadFile = File(...),
+):
+    """Get an intelligent CV layout recommendation."""
+    resume_text = await extract_text_from_file(resume_file)
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="Could not extract resume text.")
+
+    from app.services.analysis.layout_recommender import recommend_layout
+
+    recommendation = await asyncio.to_thread(
+        recommend_layout,
+        job_description,
+        resume_text,
+    )
+    return {"status": "success", "recommendation": recommendation}
+
+
+# ============================================================
+# ATS IMPROVEMENT LOOP
+# ============================================================
+
+
+@router.post("/improvement-loop")
+async def improvement_loop_endpoint(
+    job_description: str = Form(...),
+    resume_file: UploadFile = File(...),
+    target_score: float = Form(100.0),
+):
+    """Run the ATS improvement loop and return before/after comparison."""
+    resume_text = await extract_text_from_file(resume_file)
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="Could not extract resume text.")
+
+    from app.services.analysis.ats_improvement import run_improvement_loop
+
+    result = await asyncio.to_thread(
+        run_improvement_loop,
+        resume_text,
+        job_description,
+        target_score,
+    )
+    return {"status": "success", "result": result}
+
+
+# ============================================================
+# POST-GENERATION ATS + LAYOUT VALIDATION
+# ============================================================
+
+
+@router.post("/validate-ats")
+async def validate_ats_endpoint(
+    pdf_file: UploadFile = File(...),
+    job_description: str = Form(...),
+    expected_text: str = Form(""),
+    layout: str = Form(""),
+):
+    """
+    Score a *generated* CV, with document readability actually measured.
+
+    The pre-generation score necessarily skips the PDF Parsing check, because
+    there is no document yet. This endpoint is the other half of that: it takes
+    the finished PDF, activates the category against the real bytes, and
+    returns the final score alongside the structural verdicts a user needs in
+    order to decide whether to regenerate.
+
+    ``expected_text`` is what went into the document. It is optional; without it
+    the content-retention check has nothing honest to compare against and is
+    reported as unmeasured rather than guessed.
+    """
+    from app.services.analysis.ats_scoring import compute_ats_breakdown, get_ats_summary
+    from app.services.analysis.layout_recommender import get_layout_metadata
+    from app.services.cv.pdf_validation import (
+        PDFValidationError,
+        extract_pdf_text,
+        validate_pdf_content,
+    )
+
+    filename = (pdf_file.filename or "").strip()
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only a .pdf file can be scored.")
+
+    payload = await pdf_file.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+    if len(payload) > 32 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="The PDF is too large to score.")
+    if not payload.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="That file is not a PDF.")
+
+    breakdown = await asyncio.to_thread(
+        compute_ats_breakdown,
+        expected_text or "",
+        job_description,
+        payload,
+    )
+    summary = get_ats_summary(breakdown)
+
+    # Document structure, reported separately from the score: a document can be
+    # perfectly readable and still be the wrong length for the role.
+    document: dict = {"pages": None, "sections_found": [], "problems": [], "valid": False}
+    try:
+        report = validate_pdf_content(
+            payload,
+            expected_pages=None,
+            expected_text=expected_text or None,
+        )
+        document.update(
+            {
+                "pages": report.get("pages"),
+                "sections_found": report.get("sections_found", []),
+                "sections_missing": report.get("sections_missing", []),
+                "content_retention": report.get("content_retention"),
+                "problems": report.get("problems", []),
+                "valid": not report.get("problems"),
+            }
+        )
+    except PDFValidationError as exc:
+        document.update(
+            {
+                "pages": (exc.report or {}).get("pages"),
+                "sections_found": (exc.report or {}).get("sections_found", []),
+                "problems": (exc.report or {}).get("problems", []) or ["content validation failed"],
+                "valid": False,
+                "detail": str(exc),
+            }
+        )
+
+    try:
+        text_chars = len(extract_pdf_text(payload).strip())
+    except Exception:
+        text_chars = 0
+    document["text_chars"] = text_chars
+
+    # Layout verdict: was the chosen layout one the application actually has,
+    # and how safe is it? Reported, never enforced.
+    layout_verdict: dict = {"requested": layout or None}
+    if layout:
+        meta = get_layout_metadata(layout)
+        if not meta:
+            layout_verdict.update(
+                {
+                    "known": False,
+                    "detail": "This layout is not one the generator has; the document "
+                    "was produced by some other path.",
+                }
+            )
+        else:
+            layout_verdict.update(
+                {
+                    "known": True,
+                    "name": meta.get("name"),
+                    "ats_safety": meta.get("ats_safety"),
+                    "ats_safety_score": meta.get("ats_safety_score"),
+                    "structure": meta.get("structure"),
+                    "parsing_risk": meta.get("parsing_risk"),
+                    "language": meta.get("language"),
+                }
+            )
+
+    pdf_category = breakdown["categories"].get("pdf_parsing", {})
+
+    return {
+        "status": "success",
+        "ats_score": breakdown["ats_score"],
+        "band": breakdown.get("band"),
+        "summary": breakdown.get("summary"),
+        "breakdown": breakdown,
+        "summary_detail": summary,
+        "document": document,
+        "layout": layout_verdict,
+        "pdf_parsing": {
+            "measured": not pdf_category.get("not_measured", False),
+            "score": pdf_category.get("score"),
+            "checks": pdf_category.get("checks", []),
+            "failed_checks": pdf_category.get("failed_checks", []),
+            "issues": pdf_category.get("issues", []),
+            "explanation": pdf_category.get("explanation", ""),
+        },
+        "ats_issues": len([a for a in breakdown.get("improvement_areas", [])]),
+    }
 
 
 # ============================================================
