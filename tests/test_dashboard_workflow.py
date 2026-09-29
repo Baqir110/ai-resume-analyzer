@@ -403,7 +403,7 @@ def _render(page: str, **session) -> AppTest:
 def _reference_pdf() -> bytes:
     """A real, readable one-page PDF, for exercising the preview stage."""
     sys.path.insert(0, str(Path(APP).resolve().parents[1] / "tests"))
-    from test_ats_scoring_helpers import minimal_pdf
+    from tests.test_ats_scoring_helpers import minimal_pdf
 
     return minimal_pdf()
 

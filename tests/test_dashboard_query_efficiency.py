@@ -37,6 +37,10 @@ from app.services.tracking import state_machine
 #: "1.2M". Anything else is a placeholder.
 _COUNT_LIKE = re.compile(r"^\d[\d,.]*\s*[KMB]?$", re.IGNORECASE)
 
+#: A rendered count: a plain integer, or an abbreviated one such as "9.3K" or
+#: "1.2M". Anything else is a placeholder.
+_COUNT_LIKE = re.compile(r"^\d[\d,.]*\s*[KMB]?$", re.IGNORECASE)
+
 
 def test_agent_page_reads_every_state_in_one_query(monkeypatch):
     """

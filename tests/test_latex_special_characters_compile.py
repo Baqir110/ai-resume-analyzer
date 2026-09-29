@@ -36,9 +36,8 @@ PREAMBLE = r"""\documentclass[11pt,a4paper]{article}
 \usepackage{xcolor}
 \usepackage{titlesec}
 \usepackage{enumitem}
-\usepackage[normalem]{ulem}
 \usepackage{hyperref}
-\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{\uline{#2}}}
+\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{\underline{#2}}}
 \newcommand{\jobheader}[3]{\noindent\textbf{#1}, #2 \hfill \textit{#3}\par}
 \newcommand{\degreeheader}[3]{\jobheader{#1}{#2}{#3}}
 \newcommand{\projheader}[3]{\noindent\textbf{#1} \ifx\relax#2\relax\else\textit{(#2)}\fi \ifx\relax#3\relax\else\hfill\hrlink{#3}{GitHub}\fi\par}

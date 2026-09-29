@@ -1436,7 +1436,7 @@ GERMAN_CORPORATE_LATEX_TEMPLATE = r"""
 \usepackage{xcolor}
 \usepackage{titlesec}
 \usepackage{enumitem}
-\usepackage[normalem]{ulem}
+
 \usepackage{hyperref}
 
 \definecolor{primary}{HTML}{0F172A}
@@ -1451,7 +1451,7 @@ GERMAN_CORPORATE_LATEX_TEMPLATE = r"""
     pdfborder={0 0 0}
 }
 
-\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{\uline{#2}}}
+\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{\underline{#2}}}
 
 \titleformat{\section}
     {\large\bfseries\color{primary}}
@@ -1678,7 +1678,7 @@ GERMAN_MODERN_LATEX_TEMPLATE = r"""
 \usepackage{xcolor}
 \usepackage{titlesec}
 \usepackage{enumitem}
-\usepackage[normalem]{ulem}
+
 \usepackage{hyperref}
 
 \definecolor{primary}{HTML}{0284C7}
@@ -1693,7 +1693,7 @@ GERMAN_MODERN_LATEX_TEMPLATE = r"""
     pdfborder={0 0 0}
 }
 
-\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{\uline{#2}}}
+\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{\underline{#2}}}
 
 \titleformat{\section}
     {\large\bfseries\color{primary}}
@@ -1761,7 +1761,7 @@ INTERNATIONAL_ATS_LATEX_TEMPLATE = r"""
 \usepackage{xcolor}
 \usepackage{titlesec}
 \usepackage{enumitem}
-\usepackage[normalem]{ulem}
+
 \usepackage{hyperref}
 \sloppy
 \setlength{\emergencystretch}{3em}
@@ -1779,7 +1779,7 @@ INTERNATIONAL_ATS_LATEX_TEMPLATE = r"""
   pdfborder={0 0 0}
 }
 
-\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{\uline{#2}}}
+\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{\underline{#2}}}
 
 \titleformat{\section}
   {\large\bfseries\color{primary}}
@@ -2098,7 +2098,7 @@ TECHNICAL_LEAD_LATEX_TEMPLATE = r"""
 \usepackage{xcolor}
 \usepackage{titlesec}
 \usepackage{enumitem}
-\usepackage[normalem]{ulem}
+
 \usepackage{hyperref}
 \sloppy
 \setlength{\emergencystretch}{3em}
@@ -2117,7 +2117,7 @@ TECHNICAL_LEAD_LATEX_TEMPLATE = r"""
     pdfborder={0 0 0}
 }
 
-\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{\uline{#2}}}
+\newcommand{\hrlink}[2]{\href{\detokenize{#1}}{\underline{#2}}}
 
 \titleformat{\section}
     {\large\bfseries\color{primary}}

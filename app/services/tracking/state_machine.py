@@ -213,6 +213,20 @@ class ApplicationStateMachine:
                     )
                     """)
 
+                # Live agent status table (used by the dashboard's Live Agent panel)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS agent_live_status (
+                        id INTEGER PRIMARY KEY CHECK (id = 1),
+                        stage TEXT,
+                        source TEXT,
+                        job_title TEXT,
+                        company TEXT,
+                        retry_count INTEGER DEFAULT 0,
+                        current_error TEXT,
+                        updated_at TEXT
+                    )
+                    """)
+
                 # Rows created by the pre-state-machine tracker have no event
                 # history. Translate their legacy dashboard status once so an
                 # old "Saved" application is not accidentally enqueued for a

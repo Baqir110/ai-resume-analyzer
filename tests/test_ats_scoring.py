@@ -154,7 +154,7 @@ class TestBreakdownShape:
 
     def test_weights_sum_to_one_when_everything_measured(self):
         """With a PDF supplied, no weight is redistributed."""
-        from test_ats_scoring_helpers import minimal_pdf
+        from tests.test_ats_scoring_helpers import minimal_pdf
 
         result = compute_ats_breakdown(STRONG_RESUME, MATCHING_JD, minimal_pdf())
         weights = [d["weight"] for d in result["categories"].values()]
@@ -362,7 +362,7 @@ class TestCVStructure:
 
 class TestPDFParsing:
     def test_measured_once_a_pdf_is_supplied(self):
-        from test_ats_scoring_helpers import minimal_pdf
+        from tests.test_ats_scoring_helpers import minimal_pdf
 
         result = compute_ats_breakdown(STRONG_RESUME, MATCHING_JD, minimal_pdf())
         pdf = result["categories"]["pdf_parsing"]
@@ -377,7 +377,7 @@ class TestPDFParsing:
         assert pdf["issues"]
 
     def test_retention_only_claimed_when_there_is_a_baseline(self):
-        from test_ats_scoring_helpers import minimal_pdf
+        from tests.test_ats_scoring_helpers import minimal_pdf
 
         without_text = compute_ats_breakdown("", MATCHING_JD, minimal_pdf())
         assert without_text["categories"]["pdf_parsing"]["content_retention"] is None

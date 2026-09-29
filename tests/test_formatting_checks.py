@@ -8,7 +8,6 @@ come back clean.
 """
 
 import pytest
-from test_ats_scoring_helpers import minimal_pdf, pdf_with_text
 
 from app.services.analysis.formatting_checks import (
     analyze_pdf_layout,
@@ -17,6 +16,7 @@ from app.services.analysis.formatting_checks import (
     detect_sections,
     find_latex_artifacts,
 )
+from tests.test_ats_scoring_helpers import minimal_pdf, pdf_with_text
 
 # ---------------------------------------------------------------------------
 # Fixtures
