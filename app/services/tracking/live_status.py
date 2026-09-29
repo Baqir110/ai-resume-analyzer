@@ -16,13 +16,14 @@ from typing import Any, Optional
 
 from app.services.tracking.tracker import ApplicationTrackerService
 
-_TABLE_READY = False
-
 
 def _ensure_table() -> None:
-    global _TABLE_READY
-    if _TABLE_READY:
-        return
+    """Create the agent_live_status table if it does not exist.
+
+    Uses CREATE TABLE IF NOT EXISTS so it is safe to call multiple times.
+    No module-level flag: in tests, the database may be recreated between
+    runs, and a cached flag would skip table creation leaving the table missing.
+    """
     with ApplicationTrackerService._get_connection() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS agent_live_status (
@@ -37,7 +38,6 @@ def _ensure_table() -> None:
             )
             """)
         conn.commit()
-    _TABLE_READY = True
 
 
 def set_stage(

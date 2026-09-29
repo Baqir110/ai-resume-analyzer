@@ -139,7 +139,7 @@ def test_analysis_recommends_a_layout(monkeypatch):
 
 
 def _pdf_upload():
-    from test_ats_scoring_helpers import minimal_pdf
+    from tests.test_ats_scoring_helpers import minimal_pdf
 
     return {"pdf_file": ("cv.pdf", minimal_pdf(), "application/pdf")}
 
