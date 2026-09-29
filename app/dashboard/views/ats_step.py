@@ -234,10 +234,10 @@ def _render_breakdown_expander(analysis: dict) -> None:
         # Category table
         rows = []
         for cat_name, cat_data in categories.items():
-            score = cat_data.get("score", 0)
-            weight = cat_data.get("weight", 0)
-            weighted = cat_data.get("weighted_points", 0)
-            lost = cat_data.get("points_lost", 0)
+            score = cat_data.get("score") or 0
+            weight = cat_data.get("weight") or 0
+            weighted = cat_data.get("weighted_points") or 0
+            lost = cat_data.get("points_lost") or 0
             friendly = cat_name.replace("_", " ").title()
             rows.append(
                 {
