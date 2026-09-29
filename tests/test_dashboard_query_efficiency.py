@@ -22,16 +22,14 @@ import re
 import pytest
 from streamlit.testing.v1 import AppTest
 
-# Imported by bare module name, not as ``tests.test_dashboard_workflow``.
-# There is no ``tests/__init__.py``, so ``tests`` is not a package and the
-# dotted form raises ModuleNotFoundError at collection -- which took the whole
-# run down before this file ever executed, so its assertions had not been
-# running at all.
-from test_dashboard_workflow import APP
-
 from app.dashboard import workflow
 from app.services.jobs.agent_schemas import ApplicationState
 from app.services.tracking import state_machine
+from tests.test_dashboard_workflow import APP
+
+#: A rendered count: a plain integer, or an abbreviated one such as "9.3K" or
+#: "1.2M". Anything else is a placeholder.
+_COUNT_LIKE = re.compile(r"^\d[\d,.]*\s*[KMB]?$", re.IGNORECASE)
 
 #: A rendered count: a plain integer, or an abbreviated one such as "9.3K" or
 #: "1.2M". Anything else is a placeholder.
