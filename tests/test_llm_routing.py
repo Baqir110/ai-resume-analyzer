@@ -544,6 +544,37 @@ def test_error_classification(message, status, expected):
     assert classify_llm_error(FakeStatus(message, status)) == expected
 
 
+def test_a_retired_model_id_is_a_model_problem_not_a_malformed_request():
+    """
+    The regression. OpenRouter reports a model id it no longer serves as a bad
+    *request*: 400 "... is not a valid model ID". The generic 400 mapping read
+    that as ``malformed_response``, which blamed the prompt and hid the one
+    condition a different model on the same provider fixes.
+    """
+    retired = FakeStatus(
+        "Error code: 400 - {'error': {'message': "
+        "'nvidia/nemotron-3-ultra:free is not a valid model ID', 'code': 400}}",
+        400,
+    )
+
+    assert classify_llm_error(retired, "openrouter") == LLM_ERROR_MODEL_UNAVAILABLE
+    # And it is not a reason to re-send the identical request: the id is the
+    # problem, so the same prompt fails identically every time.
+    assert provider_module._is_retryable_error(retired, "openrouter") is False
+
+
+def test_a_400_that_merely_mentions_a_host_is_not_a_model_problem():
+    """
+    The other direction, so the override above cannot run away: "no such host"
+    is one of the ``model_unavailable`` markers, and on a 5xx it is a DNS
+    failure. The override is therefore scoped to 400 and 422.
+    """
+    assert (
+        classify_llm_error(FakeStatus("bad gateway: no such host", 502), "openrouter")
+        == LLM_ERROR_SERVER
+    )
+
+
 def test_insufficient_credits_is_not_confused_with_a_rate_limit():
     # The reported 429 insufficient_credits loop: the two share a status code
     # and mean opposite things for retrying.
@@ -566,6 +597,75 @@ def test_classification_never_leaks_the_api_key(hybrid):
 # ---------------------------------------------------------------------------
 # Fallback behaviour
 # ---------------------------------------------------------------------------
+
+
+def test_direct_route_falls_back_to_the_providers_other_models(clean_env, monkeypatch):
+    """
+    The regression, and the cause of every failed CV generation in one run.
+
+    ``route_mode="direct"`` is what the workflow page sends by default. It built
+    a *single* candidate from the provider's default model, so when that id was
+    retired -- ``nvidia/nemotron-3-ultra:free``, which OpenRouter no longer
+    serves -- the request answered 400 and the router had nowhere to go, even
+    though FALLBACK_MODEL_1 held a working id the whole time.
+
+    "Direct" pins the provider, not one model, so the provider's own ordered
+    list is what should be walked.
+    """
+    clean_env.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    clean_env.setenv("OPENROUTER_MODEL", "nvidia/nemotron-3-ultra:free")
+    clean_env.setenv("FALLBACK_MODEL_1", "openrouter/free")
+
+    candidates = _candidates(
+        provider="openrouter",
+        model=None,
+        route_mode="direct",
+        task="full_cv_generation",
+    )
+
+    assert ("openrouter", "nvidia/nemotron-3-ultra:free") in candidates
+    assert ("openrouter", "openrouter/free") in candidates
+    assert all(provider == "openrouter" for provider, _ in candidates), (
+        "direct mode must not widen to another provider"
+    )
+
+    # An explicit model still pins exactly one candidate.
+    pinned = _candidates(
+        provider="openrouter",
+        model="nvidia/nemotron-3-super-120b-a12b:free",
+        route_mode="direct",
+        task="full_cv_generation",
+    )
+    assert pinned == [("openrouter", "nvidia/nemotron-3-super-120b-a12b:free")]
+
+
+def test_direct_route_recovers_when_the_first_model_id_is_retired(
+    hybrid, monkeypatch
+):
+    """The end-to-end shape of the fix: one bad id, then a working one."""
+    hybrid.setenv("OPENROUTER_MODEL", "nvidia/nemotron-3-ultra:free")
+    hybrid.setenv("FALLBACK_MODEL_1", "openrouter/free")
+    seen: list[str] = []
+
+    def fake_execute(**kwargs):
+        seen.append(kwargs["model"])
+        if "nemotron-3-ultra" in kwargs["model"]:
+            raise FakeStatus(
+                "'nvidia/nemotron-3-ultra:free is not a valid model ID'", 400
+            )
+        return "generated content"
+
+    monkeypatch.setattr(LLMService, "_execute_single_provider", staticmethod(fake_execute))
+
+    result = LLMService.generate(
+        prompt="hello",
+        provider="openrouter",
+        route_mode="direct",
+        task="full_cv_generation",
+    )
+
+    assert result == "generated content"
+    assert seen == ["nvidia/nemotron-3-ultra:free", "openrouter/free"]
 
 
 def test_auto_falls_over_to_the_next_provider(hybrid, monkeypatch):

@@ -131,7 +131,13 @@ def _get_preset_config(selected_key: str) -> dict[str, str]:
         return {
             "kind": "openrouter",
             "model": os.getenv("OPENROUTER_MODEL")
-            or os.getenv("PRIMARY_MODEL", "nvidia/nemotron-3-ultra:free"),
+            or os.getenv("PRIMARY_MODEL")
+            # The registry's OpenRouter default is OpenRouter's own router to
+            # whichever free model is available. A hard-coded vendor id goes
+            # stale: this default was `nvidia/nemotron-3-ultra:free`, which the
+            # provider retired, so an unset OPENROUTER_MODEL meant a 400 on
+            # every browser-agent step.
+            or "openrouter/free",
             "api_key_env": "OPENROUTER_API_KEY",
             "base_url": "https://openrouter.ai/api/v1",
         }

@@ -1040,7 +1040,7 @@ retired model id — not a statement about the provider.
 | `openai` | API | yes | FAIL (0.5 s) | NOT TESTED | 401 — the configured key is not valid |
 | `claude` | API | yes | FAIL (0.4 s) | NOT TESTED | 400 — the key is not scoped to a workspace |
 | `deepseek` | API | yes | FAIL (0.9 s) | NOT TESTED | 402 — insufficient balance, correctly classified as non-retryable |
-| `openrouter` | API | yes | FAIL (0.3 s) | NOT TESTED | 400 — `nvidia/nemotron-3-ultra:free` is no longer a valid model id |
+| `openrouter` | API | yes | **PASS** (3.0 s) | NOT TESTED | PASS once `OPENROUTER_MODEL` named a live id. The previously configured `nvidia/nemotron-3-ultra:free` was retired and answered 400 |
 | `experiential` | API | yes | FAIL (0.8 s) | NOT TESTED | 403 — the key does not grant the configured model alias |
 | `huggingface` | API | yes | NOT CONFIGURED | NOT TESTED | A credential is set, but no model is chosen, so nothing was sent |
 | `cerebras` | API | no | NOT CONFIGURED | NOT TESTED | No credential set |
@@ -1048,9 +1048,14 @@ retired model id — not a statement about the provider.
 | `github` | API | no | NOT CONFIGURED | NOT TESTED | No credential set |
 
 The OpenRouter row is the clearest argument for the rule this project follows:
-a model id that carried `:free` six months ago is gone, and the only fix was one
-line in `.env`. Nothing in this application treats a model identifier as
-permanent, and nothing in this table claims a free tier still exists.
+a model id that carried `:free` six months ago is gone, and the fix was one line
+in `.env`. That failure also exposed a real defect, now fixed — a retired model
+id arrives as `400 ... is not a valid model ID`, which was classified as a
+malformed *request* rather than an unavailable *model*, so the router blamed the
+prompt and gave up. It now classifies as `model_unavailable` and walks the
+provider's remaining models instead of raising on the first candidate. Nothing
+here treats a model identifier as permanent, and nothing in this table claims a
+free tier still exists.
 
 **Not one API provider completed the full CV pipeline during this test.** The
 local models did. That is a statement about the credentials in this

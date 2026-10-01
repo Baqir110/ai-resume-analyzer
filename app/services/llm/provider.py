@@ -1815,6 +1815,43 @@ _STATUS_CATEGORIES: dict[int, str] = {
     504: LLM_ERROR_TIMEOUT,
 }
 
+#: Categories whose message may override the generic status-code mapping above,
+#: because a body that states a more specific cause is trusted over the code.
+_STATUS_OVERRIDE_CATEGORIES = frozenset(
+    {
+        LLM_ERROR_CREDITS,
+        LLM_ERROR_AUTH,
+        LLM_ERROR_CONTEXT_TOO_LARGE,
+        LLM_ERROR_MODEL_UNAVAILABLE,
+    }
+)
+
+#: Where ``model_unavailable`` is allowed to override the status code.
+#:
+#: A retired or misspelled model id arrives as a *bad request*, not as a missing
+#: resource: OpenRouter answers ``400 ... 'nvidia/nemotron-3-ultra:free' is not
+#: a valid model ID`` for an id it no longer serves, rather than a 404. Left to
+#: the generic table that 400 read as ``malformed_response``, which was wrong
+#: twice over: it blamed the prompt, and it hid the one condition that a
+#: different model on the *same* provider fixes -- so the router reported a dead
+#: end where a fallback was the whole answer.
+#:
+#: Scoped to these two codes because unscoped the markers would also claim a 502
+#: whose body merely mentions "no such host", which is a DNS failure and not a
+#: model problem at all.
+_MODEL_UNAVAILABLE_STATUSES = frozenset({400, 422})
+
+
+def _status_override_allowed(category: str, status: int) -> bool:
+    """May ``category`` from the message body override the code's own meaning?"""
+    if category not in _STATUS_OVERRIDE_CATEGORIES:
+        return False
+
+    if category == LLM_ERROR_MODEL_UNAVAILABLE:
+        return status in _MODEL_UNAVAILABLE_STATUSES
+
+    return True
+
 
 #: How long to wait at most for a rate-limited provider, in seconds.
 #:
@@ -1924,11 +1961,7 @@ def classify_llm_error(
         # the other stops immediately.
         for category, markers in _ERROR_PATTERNS:
             if any(marker in message for marker in markers):
-                if category in {
-                    LLM_ERROR_CREDITS,
-                    LLM_ERROR_AUTH,
-                    LLM_ERROR_CONTEXT_TOO_LARGE,
-                }:
+                if _status_override_allowed(category, status):
                     return category
                 break
 
@@ -3028,12 +3061,22 @@ class LLMService:
             if selected_provider not in SUPPORTED_PROVIDERS:
                 raise ValueError(f"Unsupported LLM provider: " f"{selected_provider}")
 
-            selected_model = model or cls.get_default_model(selected_provider)
-
-            add(
-                selected_provider,
-                selected_model,
-            )
+            if model:
+                add(
+                    selected_provider,
+                    model,
+                )
+            else:
+                # "Direct" pins the provider, not one model id. It used to build
+                # a single candidate from the provider's default model, so a
+                # retired id -- `nvidia/nemotron-3-ultra:free`, which OpenRouter
+                # no longer serves -- answered 400 on the first request with
+                # nowhere else to go, and every CV generation failed with it.
+                # The provider's ordered list is what PRIMARY_MODEL and the
+                # FALLBACK_MODEL_n chain are for, and the `experiential` branch
+                # below already reads it this way; this route ignored it.
+                for candidate_model in cls._default_models_for(selected_provider):
+                    add(selected_provider, candidate_model)
 
             return candidates
 
@@ -4473,8 +4516,21 @@ class LLMService:
                 last_provider = f"{candidate_provider}/{candidate_model}"
                 last_failure_category = category
 
-                # Explicit direct mode means exactly one provider.
-                if effective_route_mode == "direct":
+                # Explicit direct mode means exactly one provider -- and it
+                # still does, because every direct candidate is that one
+                # provider: the mode chooses the provider and the provider's
+                # own ordered model list supplies the remaining candidates.
+                # So continuing here cannot escalate to anyone else, and it is
+                # what makes a retired model id survivable. OpenRouter answers
+                # 400 "is not a valid model ID" for an id it no longer serves,
+                # which used to raise on the first candidate and strand the
+                # request even though FALLBACK_MODEL_1 held a working id the
+                # whole time. The provider is only given up on once its models
+                # are exhausted, which is what `attempt_number` here decides.
+                if (
+                    effective_route_mode == "direct"
+                    and attempt_number >= len(selected_candidates)
+                ):
                     raise
 
                 # Local-only mode never escalates. A failure here is reported
