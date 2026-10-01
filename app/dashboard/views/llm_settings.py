@@ -28,29 +28,32 @@ from __future__ import annotations
 import streamlit as st
 
 from app.dashboard import theme, workflow
-from app.dashboard.components import render_quota_card
+from app.dashboard.components import (
+    _ROUTE_MODES,
+    LOCAL_PROVIDERS,
+    PROVIDER_LABELS,
+    render_quota_card,
+)
 from app.dashboard.helpers import fetch_model_discovery, fetch_quota_status, get_api_base
 
-#: Display names for the providers whose canonical name is not obvious.
-_LABELS = {
-    "ollama": "Ollama (local)",
-    "omniroute": "OmniRoute (local gateway)",
-    "gemini": "Google Gemini",
-    "openai": "OpenAI",
-    "claude": "Anthropic Claude",
-    "groq": "Groq",
-    "deepseek": "DeepSeek",
-    "openrouter": "OpenRouter",
-    "cerebras": "Cerebras",
-    "cloudflare": "Cloudflare Workers AI",
-    "github": "GitHub Models",
-    "huggingface": "Hugging Face",
-    "experiential": "Experiential Labs",
-}
+# Short local aliases. Assigned rather than imported as `X as _Y`, because the
+# aliased-import form makes isort and ruff disagree about the same lines: isort
+# (profile=black) splits them onto separate lines and ruff's isort rule merges
+# them, so the pre-commit hook and CI each rewrote the file in turn.
+_LOCAL = LOCAL_PROVIDERS
+_LABELS = PROVIDER_LABELS
 
-#: Providers that run on the operator's own machine. Worth calling out because
-#: they are the ones where "free" and "private" are both true.
-_LOCAL = {"ollama", "omniroute"}
+
+def _route_options() -> list[str]:
+    """
+    The route modes offered here, read from the shared list.
+
+    This page and the per-tool provider selector used to declare their own. They
+    had drifted: this page offered three modes and the other two, so selecting
+    `automatic` here and then opening a tool page quietly turned a
+    fallback-enabled request into a single-provider one.
+    """
+    return [mode for mode, _label in _ROUTE_MODES]
 
 
 def _label(name: str) -> str:
@@ -278,12 +281,10 @@ def render_llm_settings_page() -> None:
 
         route_mode = st.selectbox(
             "Route mode",
-            ["direct", "automatic", "experiential"],
+            _route_options(),
             key="llm_route_mode",
-            help=(
-                "direct: exactly this provider, no fallback.\n\n"
-                "automatic: this provider first, then the configured chain.\n\n"
-                "experiential: route through the Experiential Labs gateway."
+            help="\n\n".join(
+                label for _mode, label in _ROUTE_MODES
             ),
         )
 

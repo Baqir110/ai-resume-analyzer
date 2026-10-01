@@ -1189,9 +1189,18 @@ _REDACTED_ENV_NAMES: tuple[str, ...] = tuple(
 )
 
 
-def _safe_error(exc: BaseException) -> str:
-    """Return a short diagnostic with credentials and direct identifiers removed."""
-    text = str(exc).strip() or exc.__class__.__name__
+def redact_secrets(text: str) -> str:
+    """
+    Remove credentials and direct identifiers from a free-form string.
+
+    Shared rather than duplicated. Three modules needed this -- the provider
+    router, the API layer and the structured logger -- and each had its own
+    version, so text that was scrubbed on two of the three paths leaked on the
+    third. Exported as the single implementation; callers decide their own length
+    bound, because the router wants 500 characters and an HTTP response wants 300.
+    """
+    text = text.strip()
+
     sensitive_values = [
         value
         for name, value in ((name, os.getenv(name, "").strip()) for name in _REDACTED_ENV_NAMES)
@@ -1208,7 +1217,12 @@ def _safe_error(exc: BaseException) -> str:
     text = re.sub(r"://[^\s/@:]+:[^\s/@]+@", "://[REDACTED]@", text)
     text = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[EMAIL]", text)
     text = re.sub(r"(?<!\w)\+?\d[\d .()/-]{7,}\d(?!\w)", "[PHONE]", text)
-    return text[:500]
+    return text
+
+
+def _safe_error(exc: BaseException) -> str:
+    """Return a short diagnostic with credentials and direct identifiers removed."""
+    return redact_secrets(str(exc) or exc.__class__.__name__)[:500]
 
 
 def _write_log(event: dict[str, Any]) -> None:
@@ -2363,14 +2377,21 @@ class LLMService:
         return _live_api_key(provider.lower())
 
     @classmethod
-    def _provider_is_configured(
+    def _provider_has_credential(
         cls,
         provider: str,
     ) -> bool:
+        """
+        Whether a provider's credential is present, ignoring any model choice.
+
+        Model discovery runs off this rather than ``_provider_is_configured``:
+        discovery exists precisely so an operator can find a model to set, so
+        requiring a model first would make it impossible to discover one.
+        """
         provider = provider.lower()
 
         if provider == "ollama":
-            return bool(_get_ollama_base_url() and DEFAULT_MODELS.get("ollama"))
+            return bool(_get_ollama_base_url())
 
         spec = get_spec(provider)
 
@@ -2378,17 +2399,36 @@ class LLMService:
             return False
 
         if not spec.requires_key:
-            # A local gateway that needs no credential is usable as soon as its
-            # model is named. Ollama is handled above because it also needs a
-            # resolvable base URL.
-            return bool(spec.default_model or _env(spec.model_env))
+            return True
 
-        if spec.key_env:
-            return bool(cls._provider_api_key(provider))
+        return bool(cls._provider_api_key(provider))
 
-        # No credential variable and no explicit requirement: usable as long as
-        # a model is named.
-        return bool(spec.default_model or _env(spec.model_env))
+    @classmethod
+    def _provider_is_configured(
+        cls,
+        provider: str,
+    ) -> bool:
+        provider = provider.lower()
+
+        if provider == "ollama":
+            return bool(_get_ollama_base_url() and cls.get_default_model("ollama"))
+
+        spec = get_spec(provider)
+
+        if spec is None:
+            return False
+
+        # A provider needs a model as well as a credential before it can answer a
+        # generation request. Four registry entries ship with no default model
+        # (`cerebras`, `cloudflare`, `github`, `huggingface`), so a key alone was
+        # enough to call them configured: they entered the online chain,
+        # contributed zero candidates, and every request then died with "No
+        # configured LLM providers are available" while `/backend-status`
+        # reported them ready.
+        if not (spec.default_model or _env(spec.model_env)):
+            return False
+
+        return cls._provider_has_credential(provider)
 
     @classmethod
     def provider_status(cls) -> dict[str, dict[str, Any]]:
@@ -2397,9 +2437,16 @@ class LLMService:
         for provider in SUPPORTED_PROVIDERS:
             configured = cls._provider_is_configured(provider)
 
+            # `get_default_model`, not the `DEFAULT_MODELS` snapshot: this
+            # endpoint exists so an operator can see what a request would
+            # actually use, and `route_info()` -- three functions away -- reads
+            # the live value. The snapshot made the two disagree inside one
+            # process, which is worse than either being wrong alone.
             result[provider] = {
                 "configured": configured,
-                "model": DEFAULT_MODELS.get(provider),
+                "model": (
+                    cls.get_default_model(provider) if configured else DEFAULT_MODELS.get(provider)
+                ),
             }
 
         return result
@@ -2462,6 +2509,10 @@ class LLMService:
             "provider": canonical,
             "protocol": spec.protocol,
             "local": spec.local,
+            # Readiness for a *generation* request, which is the question this
+            # endpoint's caller is asking. Discovery below is gated on the
+            # credential alone, so a provider with a key but no model still gets
+            # listed -- that is how the operator finds the model to set.
             "configured": cls._provider_is_configured(canonical),
             "configured_model": configured_model,
             "discoverable": spec.discoverable,
@@ -2470,7 +2521,7 @@ class LLMService:
             "detail": "",
         }
 
-        if not base["configured"]:
+        if not cls._provider_has_credential(canonical):
             base["detail"] = _not_configured_detail(spec, canonical)
             return base
 

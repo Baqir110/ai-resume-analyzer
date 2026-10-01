@@ -212,29 +212,40 @@ def render_status_badge(meta: dict) -> None:
 
 
 # ============================================================
-# Provider selector
-# ============================================================
+#: Display names for the providers whose canonical name is not obvious.
+#:
+#: The single source of truth for provider naming in the dashboard. It used to
+#: live in ``views/llm_settings.py`` and be duplicated into two other views, which
+#: is how those copies drifted: they were still on six providers while the
+#: registry had grown to thirteen, so quota cards rendered the raw registry name
+#: ("openrouter", "huggingface") a few widgets away from cards reading
+#: "OpenRouter" and "Hugging Face". Two spellings of one provider in a single
+#: screen reads as two different providers.
+PROVIDER_LABELS: dict[str, str] = {
+    "ollama": "Ollama (local)",
+    "omniroute": "OmniRoute (local gateway)",
+    "gemini": "Google Gemini",
+    "openai": "OpenAI",
+    "claude": "Anthropic Claude",
+    "anthropic": "Anthropic Claude",
+    "groq": "Groq",
+    "deepseek": "DeepSeek",
+    "openrouter": "OpenRouter",
+    "cerebras": "Cerebras",
+    "cloudflare": "Cloudflare Workers AI",
+    "github": "GitHub Models",
+    "huggingface": "Hugging Face",
+    "experiential": "Experiential Labs",
+}
+
+#: Providers that run on the operator's own machine. Worth calling out because
+#: they are the ones where "free" and "private" are both true.
+LOCAL_PROVIDERS: frozenset[str] = frozenset({"ollama", "omniroute"})
 
 
-# def render_provider_selector() -> tuple[str, str]:
-#     """Render LLM provider selector.
-
-#     Returns:
-#         Tuple of (route_mode, provider_or_model)
-#     """
-#     route_options = ["experiential", "direct"]
-#     route_labels = {"experiential": "Experiential Cloud", "direct": "Direct API"}
-
-#     selected_route = st.selectbox(
-#         "Routing Mode",
-#         route_options,
-#         format_func=lambda x: route_labels[x],
-#         key="provider_selector_route",
-#         help=(
-#             "Experiential Cloud routes through the managed gateway. "
-#             "Direct API calls the provider endpoint directly using your key."
-#         ),
-#     )
+def provider_label(name: str) -> str:
+    """The display name for a provider, falling back to its canonical name."""
+    return PROVIDER_LABELS.get(name, name)
 
 
 def provider_choices() -> list[tuple[str, str]]:
@@ -243,13 +254,13 @@ def provider_choices() -> list[tuple[str, str]]:
 
     Built from the registry so the dashboard can never offer a provider the
     router does not know, or hide one it does. The literal this replaced was
-    already out of date: it offered "anthropic", which the router only accepts
-    as an alias for "claude", and omitted four providers the application
-    supports.
+    already out of date twice over: it offered "anthropic", which the router only
+    accepts as an alias for "claude", and listed six providers while the registry
+    knew thirteen.
 
-    A provider that is not configured is still listed, with the variable to set
-    in its label. Showing it is how a user discovers what to configure;
-    filtering it out would leave a UI that silently does not mention the option.
+    A provider that is not configured is still listed, with the variable to set in
+    its label. Showing it is how a user discovers what to configure; filtering it
+    out would leave a UI that silently does not mention the option.
 
     Never raises: a provider whose configuration cannot be read is shown as
     unconfigured rather than removed, because removing it would silently change
@@ -259,7 +270,7 @@ def provider_choices() -> list[tuple[str, str]]:
         from app.services.llm.provider import LLMService, get_spec
     except Exception:
         # The dashboard must still render if the LLM layer cannot be imported.
-        return [("ollama", "Ollama \u2014 local")]
+        return [("ollama", "Ollama — local")]
 
     choices: list[tuple[str, str]] = []
 
@@ -276,98 +287,115 @@ def provider_choices() -> list[tuple[str, str]]:
             configured = False
 
         if configured:
-            label = f"{name} \u2014 {where}"
+            label = f"{name} — {where}"
         else:
             # Naming the variable to set beats a greyed-out entry.
             missing = " or ".join(spec.key_env) if spec.key_env else spec.model_env
-            label = f"{name} \u2014 {where} (not configured: set {missing})"
+            label = f"{name} — {where} (not configured: set {missing})"
 
         choices.append((name, label))
 
     return choices
 
 
-#     if selected_route == "experiential":
-#         model = st.selectbox(
-#             "Experiential Model",
-#             [
-#                 "gpt-5.6-luna",
-#                 "gpt-6-astra",
-#                 "deepseek-v4-flash",
-#                 "qwen3.8-27b",
-#                 "gemini-3.7-flash",
-#             ],
-#             key="provider_selector_experiential_model",
-#         )
-#         return selected_route, model
-#     else:
-#         provider = st.selectbox(
-#             "Provider",
-#             ["gemini", "openai", "anthropic", "groq", "deepseek"],
-#             format_func=lambda x: x.title(),
-#             key="provider_selector_direct_provider",
-#         )
-#         return selected_route, provider
-def render_provider_selector() -> tuple[str, str]:
-    """Render LLM provider selector.
+# Provider selector
+# ============================================================
 
-    Returns:
-        Tuple of (route_mode, provider_or_model)
+
+#: The route modes the backend accepts, in the order they are offered. The
+#: labels are chosen so the difference is legible rather than the internal name:
+#: "direct" and "automatic" sound like a quality setting, and the actual
+#: difference is whether a failure may be handed to another provider.
+_ROUTE_MODES: tuple[tuple[str, str], ...] = (
+    (
+        "direct",
+        "Direct API — use only this provider, never fall back",
+    ),
+    (
+        "automatic",
+        "Automatic — this provider first, then the configured chain",
+    ),
+    (
+        "experiential",
+        "Experiential Cloud — route through the managed gateway",
+    ),
+)
+
+_ROUTE_LABELS: dict[str, str] = dict(_ROUTE_MODES)
+
+
+def render_provider_selector(key_prefix: str = "") -> tuple[str, str]:
     """
-    route_options = ["experiential", "direct"]
+    Render the LLM provider selector.
 
-    route_labels = {
-        "experiential": "Experiential Cloud",
-        "direct": "Direct API",
-    }
+    Returns ``(route_mode, provider_or_model)``.
+
+    The provider list is built from the registry rather than written out here.
+    It used to be a literal six providers while the router knew thirteen, so
+    OpenRouter, Cerebras, Cloudflare, GitHub Models, Hugging Face and OmniRoute
+    were unreachable from this widget and a user had no way to discover they were
+    supported at all. `provider_choices()` labels the unconfigured ones with the
+    variable to set, so the list cannot hide an option.
+
+    The route modes match the LLM Settings page exactly. They did not: this
+    widget offered two and Settings offered three, so choosing `automatic` in
+    Settings and then opening this page silently downgraded the request to a
+    single provider.
+
+    `key_prefix` namespaces the widget keys. Streamlit raises on a duplicate
+    widget id, so a page rendering this twice needs distinct prefixes.
+    """
+    suffix = f"_{key_prefix}" if key_prefix else ""
 
     selected_route = st.selectbox(
         "Routing Mode",
-        route_options,
-        format_func=lambda x: route_labels[x],
-        key="provider_selector_route",
-        help=(
-            "Experiential Cloud routes through the managed gateway. "
-            "Direct API calls the provider endpoint directly."
-        ),
+        [mode for mode, _label in _ROUTE_MODES],
+        format_func=lambda mode: _ROUTE_LABELS[mode],
+        key=f"provider_selector_route{suffix}",
+        help="\n\n".join(label for _mode, label in _ROUTE_MODES),
     )
 
     if selected_route == "experiential":
         model = st.selectbox(
             "Experiential Model",
             [
-                "gpt-5.6-luna",
                 "gpt-6-astra",
+                "gpt-5.6-luna",
+                "claude-fable-5",
+                "gemini-3.7-flash",
                 "deepseek-v4-flash",
                 "qwen3.8-27b",
-                "gemini-3.7-flash",
+                "nemotron-3-ultra-550b-a55b",
             ],
-            key="provider_selector_experiential_model",
+            key=f"provider_selector_experiential_model{suffix}",
         )
         return selected_route, model
 
+    choices = provider_choices()
+    names = [name for name, _label in choices]
+    labels = {name: label for name, label in choices}
+
+    default_index = names.index(workflow_provider_default()) if workflow_provider_default() in names else 0
+
     provider = st.selectbox(
         "Provider",
-        [
-            "ollama",
-            "gemini",
-            "openai",
-            "anthropic",
-            "groq",
-            "deepseek",
-        ],
-        format_func=lambda x: {
-            "ollama": "Ollama — Local",
-            "gemini": "Google Gemini",
-            "openai": "OpenAI",
-            "anthropic": "Anthropic",
-            "groq": "Groq",
-            "deepseek": "DeepSeek",
-        }[x],
-        key="provider_selector_direct_provider",
+        names,
+        index=default_index,
+        format_func=lambda name: labels[name],
+        key=f"provider_selector_direct_provider{suffix}",
     )
 
     return selected_route, provider
+
+
+def workflow_provider_default() -> str:
+    """The provider the workflow pages default to, or an empty string."""
+    try:
+        from app.dashboard import workflow
+
+        return workflow.generation_choice().get("provider", "") or ""
+    except Exception:
+        return ""
 
 
 # ============================================================

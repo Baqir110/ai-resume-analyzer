@@ -116,6 +116,53 @@ _GERMAN_COMPOUND_RE = re.compile(
     r"\b(" + "|".join(_GERMAN_COMPOUND_LANGUAGES) + r")\b", re.IGNORECASE
 )
 
+#: The words a CV may use to *claim* a language, per language.
+#:
+#: A posting names the language in English or as a German compound; a CV writes
+#: its own language's word for it. "German language required" was checked against
+#: the CV with a bare ``"german" in resume_lower``, so a German Lebenslauf saying
+#: "Sprachen: Deutsch (C1)" was reported as *missing* German -- a gap it can
+#: never close, because the evidence is right there under the native name.
+#: Matching the CV side in both languages is what the posting side already does.
+LANGUAGE_ALIASES: dict[str, tuple[str, ...]] = {
+    "German": ("german", "deutsch"),
+    "English": ("english", "englisch"),
+    "French": ("french", "französisch", "franzosisch"),
+    "Spanish": ("spanish", "spanisch"),
+    "Italian": ("italian", "italienisch"),
+    "Dutch": ("dutch", "niederländisch", "niederlandisch"),
+    "Portuguese": ("portuguese", "portugiesisch"),
+    "Polish": ("polish", "polnisch"),
+    "Russian": ("russian", "russisch"),
+    "Turkish": ("turkish", "türkisch", "turkisch"),
+    "Chinese": ("chinese", "chinesisch", "mandarin"),
+    "Japanese": ("japanese", "japanisch"),
+    "Arabic": ("arabic", "arabisch"),
+    "Czech": ("czech", "tschechisch"),
+    "Danish": ("danish", "dänisch", "danisch"),
+    "Finnish": ("finnish", "finnisch"),
+    "Norwegian": ("norwegian", "norwegisch"),
+    "Swedish": ("swedish", "schwedisch"),
+    "Hungarian": ("hungarian", "ungarisch"),
+    "Romanian": ("romanian", "rumänisch", "rumänisch"),
+    "Ukrainian": ("ukrainian", "ukrainisch"),
+    "Hindi": ("hindi",),
+    "Korean": ("korean", "koreanisch"),
+}
+
+
+def language_aliases(language: str) -> tuple[str, ...]:
+    """
+    Every spelling a CV may use to evidence ``language``, lower-cased.
+
+    Falls back to the language's own name for anything not in the table, so an
+    unlisted language still matches a CV that writes it in English.
+    """
+    aliases = LANGUAGE_ALIASES.get(language)
+    if aliases:
+        return aliases
+    return (language.casefold(),)
+
 #: The CEFR level, when the posting gives one.
 _CEFR_RE = re.compile(r"\b(?:CEFR\s*)?(A1|A2|B1|B2|C1|C2)\b", re.IGNORECASE)
 

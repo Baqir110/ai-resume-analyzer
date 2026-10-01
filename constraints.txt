@@ -1,6 +1,30 @@
-# Cross-package constraints for the supported runtime (Python 3.11–3.12).
+# Cross-package constraints, applied with:
+#
+#     pip install -c constraints.txt -r requirements.txt
+#
+# These are the pins that make the pinned set above resolvable. They are held
+# here rather than only in requirements.txt so that a tool installing one without
+# the other -- the Dockerfile installs this file explicitly, a contributor may not
+# -- still gets the same resolution.
+#
+# Note on Python versions: the supported targets are 3.11 and 3.12, which CI runs
+# and the Dockerfile builds. 3.13 is permitted by pyproject.toml and the branches
+# below exist because on 3.13 the python-jobspy entry is skipped (it pins a numpy
+# with no 3.13 wheels) and its regex/numpy constraints stop applying.
 numpy==1.26.3; python_version < "3.13"
 numpy>=2.0; python_version >= "3.13"
 regex>=2024.4.28,<2025.0.0; python_version < "3.13"
 regex>=2025.10.22; python_version >= "3.13"
 openai>=1.99.2,<2.0.0
+anthropic>=0.68.1,<1.0.0
+google-genai>=1.29.0,<2.0.0
+# browser-use 0.8.0 pins this exactly. It is not in requirements.txt because
+# nothing imports it directly, but without the pin a plain `pip install
+# -U` leaves the environment reporting a broken requirement via `pip check`,
+# since browser-use's own resolver is not consulted on an upgrade.
+aiohttp==3.12.15
+# scikit-learn wheels from 1.6 onwards are built against the numpy 2 ABI and fail
+# to import against the numpy 1.26.3 pin above. This is a constraint and not only
+# a requirement because jobspy's resolution can pull a newer one in transitively.
+# Scoped, because on 3.13 numpy is 2.x and there is nothing to conflict with.
+scikit-learn<1.6; python_version < "3.13"

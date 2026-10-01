@@ -37,6 +37,7 @@ from app.services.cv.optimizer import (
     suggest_best_cv_format,
 )
 from app.services.cv.pdf_compiler import LaTeXCompilationError, LaTeXSourceError, PDFLayoutError
+from app.services.cv.pdf_validation import PDFValidationError
 from app.services.llm import quota_tracker
 from app.services.llm.provider import LOG_PATH, LLMService
 from app.services.parsing.resume_parser import extract_text_from_file
@@ -170,6 +171,45 @@ class TrackerCreateRequest(BaseModel):
 
 class TrackerStatusUpdate(BaseModel):
     status: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9 _-]+$")
+
+
+#: The layout names that mean "choose one for me", so they are accepted from a
+#: client even though they are not templates themselves.
+_AUTO_LAYOUTS = {"auto", "auto_detect", ""}
+
+
+def _resolve_layout_style(
+    layout_style: str | None,
+    template_style: str | None,
+) -> str:
+    """
+    Validate the requested CV layout at the API boundary.
+
+    The generator already rejects an unknown name -- ``ValueError("Unsupported CV
+    layout style.")`` -- but it raises from inside a ``try`` that only handles
+    ``FactualValidationError``, so the ``ValueError`` escaped to Starlette's
+    default handler and a client that mistyped one character of a layout name
+    received a bare ``500 Internal Server Error``. That is a client mistake, so it
+    is answered as a 400 naming the layouts that do exist.
+    """
+    from app.services.cv.latex_generator import CV_TEMPLATES
+
+    selected = (template_style or layout_style or "auto").strip()
+
+    if selected.lower() in _AUTO_LAYOUTS:
+        return "auto"
+
+    if selected not in CV_TEMPLATES:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "unknown_layout",
+                "requested": selected[:60],
+                "available": sorted(CV_TEMPLATES),
+            },
+        )
+
+    return selected
 
 
 # ============================================================
@@ -1330,7 +1370,7 @@ async def generate_german_cv_endpoint(
     route_mode: str | None = Form(None),
     improvement_suggestions: str | None = Form(None),
 ):
-    selected_style = template_style or layout_style or "auto"
+    selected_style = _resolve_layout_style(layout_style, template_style)
 
     resume_text = await extract_text_from_file(resume_file)
 
@@ -1408,6 +1448,20 @@ async def generate_german_cv_endpoint(
                 "message": str(exc),
             },
         ) from exc
+    except PDFValidationError as exc:
+        # The document compiled; it was the *content* that failed its check, and
+        # that is a 422 about the CV, not a 500 about the compiler. The report
+        # says exactly what was lost, and this handler used to discard it in
+        # favour of a generic "LaTeX compilation failed".
+        logger.warning("Generated PDF failed content validation: %s", exc)
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "pdf_content_invalid",
+                "problems": (exc.report or {}).get("problems", []),
+                "message": str(exc),
+            },
+        ) from exc
     except Exception as exc:
         logger.exception("LaTeX compilation failed")
         raise HTTPException(
@@ -1443,7 +1497,7 @@ async def generate_tex_cv_endpoint(
     route_mode: str | None = Form(None),
     improvement_suggestions: str | None = Form(None),
 ):
-    selected_style = template_style or layout_style or "auto"
+    selected_style = _resolve_layout_style(layout_style, template_style)
 
     resume_text = await extract_text_from_file(resume_file)
 

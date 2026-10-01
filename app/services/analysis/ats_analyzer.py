@@ -617,16 +617,58 @@ def calculate_semantic_similarity(resume_text: str, job_description: str) -> flo
         return calculate_context_similarity(resume_text, job_description)
 
 
+#: Headers that satisfy each required section, in the language the candidate
+#: actually wrote in.
+#:
+#: This was a single English string per section, so a German Lebenslauf lost 45
+#: structural points for "missing" three sections it plainly had -- 'Berufserfahrung',
+#: 'Ausbildung' and 'Fähigkeiten' are the standard German headings, and every
+#: other structural check in this package (``ats_scoring`` and
+#: ``ats_improvement``) already accepted both languages. A German CV therefore
+#: scored 35% structurally and, through the 15% structural weight, was reported
+#: as a badly-failing document rather than the accurate "no formatting problems".
+#:
+#: Matching stays substring-based on purpose, so it keeps working for the
+#: inflected and compound German forms ("Berufserfahrung", "Arbeitserfahrung")
+#: without needing a stemmer.
+_STRUCTURE_SECTIONS: dict[str, tuple[str, ...]] = {
+    "experience": (
+        "experience",
+        "employment",
+        "work history",
+        "berufserfahrung",
+        "arbeitserfahrung",
+    ),
+    "education": (
+        "education",
+        "academic",
+        "degree",
+        "university",
+        "ausbildung",
+        "studium",
+        "bildung",
+    ),
+    "skills": (
+        "skills",
+        "competenc",
+        "technolog",
+        "kenntnisse",
+        "fähigkeiten",
+        "faehigkeiten",
+        "fertigkeiten",
+    ),
+}
+
+
 def check_resume_structure(resume_text: str) -> dict[str, Any]:
     """Rule-based heuristic checks for contact info and standard headers."""
     text_lower = (resume_text or "").lower()
     warnings = []
     score = 100.0
 
-    required_sections = ["experience", "education", "skills"]
-    for sec in required_sections:
-        if sec not in text_lower:
-            warnings.append(f"Missing standard section header: '{sec.capitalize()}'")
+    for section, headers in _STRUCTURE_SECTIONS.items():
+        if not any(header in text_lower for header in headers):
+            warnings.append(f"Missing standard section header: '{section.capitalize()}'")
             score -= 15.0
 
     if "@" not in text_lower:

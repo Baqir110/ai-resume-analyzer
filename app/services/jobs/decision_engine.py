@@ -21,6 +21,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from app.services.analysis.requirement_extraction import DEGREE_ORDER
 from app.services.jobs.agent_schemas import MatchResult, NormalizedJob
 
 
@@ -244,15 +245,58 @@ def _ratio_score(have: float, required: Optional[float]) -> float:
 
 
 def _education_score(candidate_level: str, required_level: str) -> float:
-    order = ["highschool", "bachelor", "master", "phd"]
+    """
+    How well the candidate's degree meets the posting's requirement.
+
+    Uses ``DEGREE_ORDER`` -- the vocabulary the extraction layer and the ATS
+    scoring layer already share -- rather than a private list. The private one
+    knew four names against the canonical five, so a posting asking for
+    ``doctorate``, ``high_school`` or ``associate`` matched nothing and fell
+    through to the neutral 75.0. A bachelor against a high-school requirement was
+    penalised for exceeding it, and a bachelor against a doctorate requirement
+    was scored as merely neutral instead of short.
+    """
     if not required_level:
         return 100.0
-    req = required_level.lower()
-    req_idx = next((i for i, o in enumerate(order) if o in req), None)
-    cand_idx = next((i for i, o in enumerate(order) if o in candidate_level.lower()), None)
-    if req_idx is None or cand_idx is None:
+
+    req = _degree_rank(required_level)
+    cand = _degree_rank(candidate_level)
+
+    if req is None or cand is None:
         return 75.0  # unknown -> neutral-ish, don't let it dominate the score
-    return 100.0 if cand_idx >= req_idx else max(0.0, 100.0 - 30.0 * (req_idx - cand_idx))
+
+    return 100.0 if cand >= req else max(0.0, 100.0 - 30.0 * (req - cand))
+
+
+#: Aliases accepted for a level name, so callers passing a free-text level
+#: ("PhD", "doctorate", "high_school") resolve to the canonical vocabulary.
+#: Without these, `DEGREE_ORDER` membership alone is a near miss for "phd".
+_DEGREE_ALIASES = {
+    "highschool": "high_school",
+    "high school": "high_school",
+    "secondary school": "high_school",
+    "bachelors": "bachelor",
+    "bsc": "bachelor",
+    "mba": "master",
+    "phd": "doctorate",
+    "doctorate": "doctorate",
+}
+
+
+def _degree_rank(level: str) -> int | None:
+    """Index of ``level`` in the shared ordering, or ``None`` if unrecognised."""
+    text = (level or "").strip().lower().replace(" ", "_")
+    if text in DEGREE_ORDER:
+        return DEGREE_ORDER.index(text)
+    text = _DEGREE_ALIASES.get(text)
+    if text and text in DEGREE_ORDER:
+        return DEGREE_ORDER.index(text)
+    # Fall back to a whole-token scan: a profile may carry "Bachelor of Science"
+    # or "Master's degree" rather than a bare level name.
+    for candidate in DEGREE_ORDER:
+        if candidate.replace("_", " ") in (level or "").lower():
+            return DEGREE_ORDER.index(candidate)
+    return None
 
 
 def _location_score(job: NormalizedJob, profile: CandidateProfile) -> float:

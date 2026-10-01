@@ -61,6 +61,7 @@ from app.services.analysis.requirement_extraction import (
     extract_language_requirements,
     find_keyword_stuffing,
     highest_degree_in_text,
+    language_aliases,
 )
 
 logger = logging.getLogger(__name__)
@@ -781,7 +782,15 @@ def _score_structured_qualifications(
     languages_missing: list[str] = []
     for entry in required_languages:
         name = entry["language"]
-        (languages_matched if name.casefold() in resume_lower else languages_missing).append(name)
+        # The CV may name a language in its own language: a German Lebenslauf
+        # writes "Deutsch", not "German". Testing the English name alone reported
+        # a German CV as unable to satisfy a German requirement -- an unfillable
+        # gap, surfaced to the candidate as such.
+        hit = next(
+            (alias for alias in language_aliases(name) if alias in resume_lower),
+            None,
+        )
+        (languages_matched if hit else languages_missing).append(name)
 
     stated = education["stated"] or bool(required_certs) or bool(required_languages)
     if not stated:
@@ -875,8 +884,14 @@ def _score_required_skills(
             (optional_matched if present else optional_missing).append(label)
         else:
             unspecified.append(label)
-            if not present:
-                optional_missing.append(label)
+            # Unspecified is scored as preferred, which is what the explanation
+            # below already told the reader these were ("preferred ones").
+            # It used to *also* add every absent one to `optional_missing`, so the
+            # same skill counted as earned via `unspecified` and as missing via
+            # `optional_missing` -- half credit for a skill the CV does not have.
+            # A CV containing none of a posting's keywords scored exactly 50% on
+            # a category worth 20% of the ATS score.
+            (optional_matched if present else optional_missing).append(label)
 
     # The structured qualifications join the required pool as one unit each: a
     # posting's degree requirement is a single gate, not a set of separate items,
@@ -923,13 +938,15 @@ def _score_required_skills(
             ),
         }
 
-    # Required items count twice as heavily as optional ones.
-    earned = 2 * len(required_matched) + len(optional_matched) + len(unspecified)
+    # Required items count twice as heavily as optional ones. `unspecified` is
+    # deliberately absent: every one of its entries is already counted exactly
+    # once through `optional_matched` or `optional_missing` above, so including
+    # it here would score each one twice.
+    earned = 2 * len(required_matched) + len(optional_matched)
     possible = (
         2 * (len(required_matched) + len(required_missing))
         + len(optional_matched)
         + len(optional_missing)
-        + len(unspecified)
     )
 
     score = 100.0 * earned / possible if possible else 100.0

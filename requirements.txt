@@ -1,89 +1,106 @@
 # Runtime dependencies for ai-resume-analyzer.
 #
-# This file is the single runtime manifest: pyproject.toml declares no
-# [project.dependencies]. Every entry below is justified by an actual import
-# somewhere in app/, scripts/ or the root entrypoints, or is required by the
-# Dockerfile, CI or the documented commands. Packages that are merely popular,
-# or that a transitive dependency happens to provide, are not listed.
+# This is the single runtime manifest: pyproject.toml declares no
+# [project.dependencies]. Every entry is here because something imports it,
+# because the Dockerfile calls it, or because a pinned transitive dependency
+# cannot be resolved without it. Nothing is listed just because it is popular.
 #
 # Cross-package version guards live in constraints.txt and are applied with
-# `pip install -c constraints.txt -r requirements.txt`. See the notes on numpy
-# and regex below before changing them.
+# `pip install -c constraints.txt -r requirements.txt`. See the numpy and regex
+# notes below before changing them.
 #
 # Linters and contributors' tooling: requirements-dev.txt.
 
-# ── API ────────────────────────────────────────────────────────────────────
+# --- API ---
 fastapi
 uvicorn[standard]
 # Required by FastAPI for every endpoint taking File() or Form(). It is a
-# plugin, not an import: nothing does `import multipart`, and the application
-# fails at request time without it rather than at import time.
+# plugin rather than an import: nothing does `import multipart`, so without it
+# the application starts cleanly and then fails on the first upload.
 python-multipart
 
-# ── Dashboard ──────────────────────────────────────────────────────────────
+# --- Dashboard ---
 streamlit>=1.37.0
-# A hard module-level import in app/dashboard/views/advanced_tools.py. It is
-# also a streamlit transitive, but relying on that means a streamlit release
-# that drops it breaks the dashboard, so it is declared directly.
+# A hard module-level import in app/dashboard/views/advanced_tools.py. It also
+# arrives with streamlit, but depending on that means a streamlit release that
+# drops it breaks the dashboard, so it is declared directly.
 pandas
 
-# ── Configuration ──────────────────────────────────────────────────────────
+# --- Configuration ---
 pydantic
 pydantic-settings
 python-dotenv
 
-# ── LLM providers ──────────────────────────────────────────────────────────
+# --- LLM providers ---
 # anthropic and openai are imported for the providers that use their native
 # SDKs. groq, openrouter, deepseek, cerebras, cloudflare, github-models,
 # huggingface, ollama and omniroute are all reached over plain HTTP against
 # their OpenAI-compatible endpoints, so they need no SDK. The provider registry
 # in app/services/llm/registry.py is the authoritative list.
-anthropic>=0.18.0
+#
+# The floors below are the real ones. browser-use 0.8.0 -- itself pinned below --
+# requires anthropic>=0.68.1,<1 and google-genai>=1.29.0,<2, so a lower bound
+# than that here would be decorative: the resolver could never satisfy both.
+anthropic>=0.68.1,<1.0.0
 openai>=1.99.2,<2.0.0
-# Gemini is imported lazily inside the provider, so the application starts
-# without it and only the Gemini provider requires it.
-google-genai>=0.1.0
+# Imported lazily inside the provider, so the application starts without it and
+# only the Gemini provider needs it.
+google-genai>=1.29.0,<2.0.0
 # Shared HTTP client for provider calls, dashboard fetches and the job adapters.
 requests>=2.31.0
 # Async HTTP client used by the provider router and the job adapters.
 httpx
 
-# ── Resume processing ──────────────────────────────────────────────────────
+# --- Resume processing ---
 pypdf
 python-docx>=1.1.0
-scikit-learn
-spacy>=3.7.0
+# The upper bound is load-bearing, not caution, and it is scoped to the branch
+# where it applies. numpy is hard-pinned to 1.26.3 for Python < 3.13, and
+# scikit-learn wheels from 1.6 onwards are built against the numpy 2 ABI and fail
+# to import against a numpy 1 install. `pip check` validates metadata, not ABI, so
+# this only surfaces when the module is actually imported. On 3.13 numpy is 2.x
+# and current scikit-learn is correct, so the bound must not apply there.
+scikit-learn<1.6; python_version < "3.13"
+# Same reasoning, and the `thinc` wheels resolve alongside spaCy against the same
+# pinned numpy.
+spacy>=3.7.0,<3.9; python_version < "3.13"
+spacy>=3.7.0; python_version >= "3.13"
 pyyaml
 beautifulsoup4
 
-# ── Job discovery and the autonomous agent ─────────────────────────────────
-# These four are pinned as a compatible set. python-jobspy 1.1.82 requires the
-# NumPy and regex ranges below; browser-use 0.8.x requires openai<2, which the
-# LLM section above already satisfies. Changing one without the others produces
-# an unsatisfiable resolution, so constraints.txt repeats the same ranges and
-# CI and Docker both install with -c.
+# --- Job discovery and the autonomous agent ---
+# These are pinned as a compatible set. python-jobspy 1.1.82 requires the NumPy
+# and regex ranges below; browser-use 0.8.0 requires openai<2, which the LLM
+# section above already satisfies, and pins the anthropic and google-genai floors
+# there are aligned to. Changing one without the others produces an unsatisfiable
+# resolution, so constraints.txt repeats the same ranges and CI and Docker both
+# install with -c.
 python-jobspy==1.1.82; python_version < "3.13"
 browser-use==0.8.0
 numpy==1.26.3; python_version < "3.13"
 numpy>=2.0; python_version >= "3.13"
+# Not imported anywhere: this is a transitive pin that has to be stated because
+# python-jobspy and transformers disagree about the range. constraints.txt carries
+# the same guard, which is where it belongs -- see the note there.
 regex>=2024.4.28,<2025.0.0; python_version < "3.13"
 regex>=2025.10.22; python_version >= "3.13"
-# Invoked directly by the Dockerfile (`playwright install --with-deps chromium`)
-# for browser-use's headless fallback path. It arrives transitively via
-# browser-use, but the Dockerfile calls the CLI, so a browser-use release that
-# drops it would break the image build silently.
+# browser-use drives Chromium over CDP and does NOT depend on playwright, so this
+# is not a transitive arrival. It is here because the Dockerfile runs
+# `playwright install --with-deps chromium` for the headless fallback path, and a
+# browser-use release that changed its driver would otherwise break the image
+# build with no declared dependency to point at.
 playwright
 
-# ── Testing ────────────────────────────────────────────────────────────────
+# --- Testing ---
 # Kept in the runtime manifest on purpose: `python -m pytest -q` is the
-# documented verification command, and CI installs only this file. Linters and
-# the coverage plugin are in requirements-dev.txt.
+# documented verification command and CI installs only this file. Linters and the
+# coverage plugin are in requirements-dev.txt.
 pytest
 # Activated by `asyncio_mode = auto` in pytest.ini. A plugin, so it is never
 # imported by name.
 pytest-asyncio
 
-# ── Optional: semantic embeddings ─────────────────────────────────────────
+# --- Optional ---
 # Real semantic similarity for the ATS analyser instead of TF-IDF cosine
 # similarity. Verified working on this repository: two paraphrases of the same
 # achievement score 0.574 cosine similarity against 0.044 for unrelated text.
@@ -91,10 +108,10 @@ pytest-asyncio
 # Marked for 3.13 only, and that marker is the whole story. sentence-transformers
 # pulls transformers, which needs regex>=2025.10.22; python-jobspy pins
 # regex<2025.0.0. Both cannot hold in one environment. On 3.13 the jobspy entry
-# above is skipped, so there is nothing to conflict with and this resolves. On
-# 3.11 and 3.12 jobspy is installed and its pin wins, so this is left out.
+# above is skipped, so there is nothing to conflict with and this resolves. On 3.11
+# and 3.12 jobspy is installed and its pin wins, so this is left out.
 #
 # At runtime the application is unaffected either way: the import is guarded and
-# gated behind ENABLE_SEMANTIC_EMBEDDINGS, falling back to TF-IDF and saying so
-# in the log.
+# gated behind ENABLE_SEMANTIC_EMBEDDINGS, falling back to TF-IDF and saying so in
+# the log.
 sentence-transformers; python_version >= "3.13"

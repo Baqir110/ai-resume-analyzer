@@ -5,6 +5,7 @@ import re
 import streamlit as st
 
 from app.dashboard.components import (
+    PROVIDER_LABELS,
     clear_result,
     get_result,
     render_error_alert,
@@ -19,16 +20,6 @@ from app.dashboard.helpers import (
     get_api_base,
     make_api_request,
 )
-
-PROVIDER_LABELS = {
-    "openai": "OpenAI",
-    "anthropic": "Anthropic",
-    "gemini": "Google Gemini",
-    "groq": "Groq",
-    "deepseek": "DeepSeek",
-    "experiential": "Experiential Cloud",
-}
-
 
 # ============================================================
 # Provider panel

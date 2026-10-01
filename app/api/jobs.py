@@ -26,6 +26,7 @@ from app.core.security import (
 from app.services.jobs.browser_use_applier import ApplicationResult, BrowserUseApplier
 from app.services.jobs.full_pipeline import run_full_application
 from app.services.jobs.job_metadata import fetch_job_metadata
+from app.services.llm.provider import redact_secrets as _redact_secrets
 from app.services.parsing.resume_parser import extract_text_from_file
 
 logger = logging.getLogger(__name__)
@@ -89,9 +90,18 @@ def _public_generated_path(value: object) -> str | None:
 
 
 def _safe_error(exc: Exception) -> str:
-    """Return a bounded, non-sensitive API error message."""
+    """
+    Return a bounded, non-sensitive API error message.
 
-    text = str(exc).strip().replace("\n", " ")
+    This value is returned to the client in the ``detail`` field of a 4xx or 5xx,
+    so "bounded" was never enough on its own. It used to do nothing but truncate,
+    and return whatever an upstream library had interpolated into its message --
+    a job board rejecting a request with the API key in the body echoed it
+    verbatim. Three sibling implementations of this function (the provider
+    router, the event log and the structured logger) all redact; this was the
+    one that did not, so it is now the one that calls the shared redactor.
+    """
+    text = _redact_secrets(str(exc)).strip().replace("\n", " ")
     return (text[:300] + "...") if len(text) > 300 else (text or "Operation failed")
 
 
