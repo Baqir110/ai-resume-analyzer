@@ -1,6 +1,6 @@
 # AI Resume & CV Optimization Hub
 
-[![Python 3.11â€“3.12](https://img.shields.io/badge/python-3.11--3.12-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11–3.12](https://img.shields.io/badge/python-3.11--3.12-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-green.svg)](https://fastapi.tiangolo.com/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.37+-red.svg)](https://streamlit.io/)
 [![Docker](https://img.shields.io/badge/Docker-compose-blue.svg)](https://docs.docker.com/compose/)
@@ -11,25 +11,24 @@
 |--------|-------|
 | API endpoints | 50 |
 | Python files | 110 |
-| Lines of code | 44,929 |
-| Tests | 1332 |
+| Lines of code | 44,937 |
+| Tests | 1338 |
 
 <!-- END:AUTO:STATS -->
 
-Compare a CV against a job posting, find out what is missing, and produce a
-targeted CV as DOCX, LaTeX or PDF. There is also bulk screening, cover letters,
-interview prep, a LinkedIn rewrite, and an application tracker.
+Compare a CV against a job posting, see what it is missing, and generate a
+targeted version as DOCX, LaTeX or PDF. Bulk screening, cover letters, interview
+prep, a LinkedIn rewrite and an application tracker sit alongside it.
 
-The thing this project is careful about is not inventing experience. Tailoring
-adds the posting's vocabulary to a CV that already supports it. Employers, job
-titles, dates and degrees are carried through untouched, and the
+Most tools in this space will write "Kubernetes" into your CV because the job ad
+asked for it. This one won't. Tailoring adds the posting's vocabulary only where
+your CV already supports it, and the
 [German Minimal ATS](CONTEXT.md) layout refuses to compile a document that
-quietly dropped or altered any of them.
+dropped or altered a company, a job title, a date or a degree.
 
-Runs entirely on your own machine. Ollama works with no account and no API key,
-and `LLM_MODE=ollama` guarantees a CV never leaves the host.
+It runs on your own machine. Ollama needs no account and no key, and
+`LLM_MODE=ollama` guarantees a CV never leaves the host.
 
-- [What it does](#what-it-does)
 - [Getting started](#getting-started)
 - [Docker](#docker)
 - [API reference](#api-reference)
@@ -49,26 +48,6 @@ and `LLM_MODE=ollama` guarantees a CV never leaves the host.
 - [Security](#security)
 - [Known limitations](#known-limitations)
 - [Contributing](#contributing)
-
----
-
-## What it does
-
-Resume parsing (PDF, DOCX, TXT) and a five-category ATS score that you can take
-apart. Each category reports the points it won and lost, so the headline number
-is a sum rather than an assertion.
-
-Missing skills get reported as gaps. They are not quietly written into the CV.
-
-Layout is recommended from the posting, with the reasoning shown. It stays a
-recommendation; the choice is yours and nothing is locked.
-
-Cross-language generation translates the *input* resume before generation, so
-LaTeX never passes through a translation step.
-
-Ten LaTeX layouts, four cover-letter tones, five interview-question families.
-
-Optional job discovery and browser-driven applications, with auto-submit off.
 
 ---
 
@@ -348,7 +327,7 @@ mounted at `/api/v1`.
 ### Authentication
 
 Every `/api/v1` route needs `X-API-Key` matching `API_KEY`. If the key is unset
-the service fails closed rather than serving unauthenticated traffic.
+the service refuses to start rather than serving unauthenticated traffic.
 
 ### Request shapes
 
@@ -396,7 +375,7 @@ Cost tiers, worst case first.
 
 Groq, Gemini and Cerebras have free tiers with no card attached. The quota
 resets, the model catalogue changes, and none of that is a promise this
-repository makes. Treat the table as a starting point, not a guarantee.
+repository makes. Treat the table as a starting point.
 
 #### PAID API — metered, needs a card
 
@@ -479,8 +458,8 @@ Retries are narrower. A bad key, an unknown model, an exhausted balance, a
 malformed body or an empty answer are not retried, because sending the identical
 request again produces the identical result. A missing *local* model is the
 interesting case: retrying the same provider cannot install it, so there is no
-retry, but a different provider can serve the request, so the router does move
-on. That is why the two decisions are separate flags rather than one boolean.
+retry, though a different provider could serve the request. That is why the two
+decisions are separate flags.
 
 Provider ids go stale. That is expected and not a defect: when one dies, fix the
 one line in `.env` and carry on.
@@ -550,16 +529,16 @@ deepseek      FAILED           deepseek-chat                  1.0  [insufficient
 
 ### Verified status
 
-A record of runs, not a capability list. Measured with
+A record of runs, rather than a capability list. Measured with
 `python -m scripts.model_matrix`, in the environment this was developed in. A
 failure here is a fact about that environment, an invalid key or an empty
-balance, not a statement about the provider.
+balance.
 
 Three columns, three different claims. AVAILABLE means the provider answered a
-listing request, which says nothing about whether it can generate. Smoke tested
-means a trivial prompt completed. Full CV pipeline means a document came out the
-other end. They are kept apart because collapsing them would let the table claim
-more than it measured.
+listing request, which tells you nothing about whether it can generate. Smoke
+tested means a trivial prompt completed. Full CV pipeline means a document came
+out the other end. They are kept apart because collapsing them would let the
+table claim more than it measured.
 
 #### Local models
 
@@ -590,9 +569,8 @@ more than it measured.
 | `cloudflare` | no | NOT CONFIGURED | NOT CONFIGURED | NOT TESTED | No credential set |
 | `github` | no | NOT CONFIGURED | NOT CONFIGURED | NOT TESTED | No credential set |
 
-The local models completed the entire pipeline. No API provider except `groq` did.
-That is a statement about the credentials in this environment, not about the
-providers.
+The local models completed the entire pipeline. No API provider except `groq` did,
+and the reason is the credentials in this environment.
 
 The `openrouter` row is the clearest argument for the rule this project follows.
 A model id that carried `:free` six months ago is gone, and the fix was one line
@@ -606,12 +584,11 @@ failing on the first one.
 
 **"Ollama returned empty content"** The output budget ran out before any answer
 was written. On a reasoning model the budget goes into the thinking channel,
-leaving `content` empty with `finish_reason=length`. The application refuses to
-return half a chain of thought as a CV, which is why it is an error rather than
-a short answer. Raise the ceiling (`OLLAMA_MAX_TOKENS=4096`) or use the native
-`/api/generate` endpoint, which honours `think:false`. The error reports the
-finish reason, available message fields, reasoning length and token counts, never
-the content.
+leaving `content` empty with `finish_reason=length`. Half a chain of thought is
+not a CV, so this surfaces as an error. Raise the ceiling
+(`OLLAMA_MAX_TOKENS=4096`) or use the native `/api/generate` endpoint, which
+honours `think:false`. The error reports the finish reason, available message
+fields, reasoning length and token counts, never the content.
 
 **A local model is never used in `auto` mode** Look for `Skipping Ollama` in the
 log. On the `/v1` shim the window is shared between prompt and completion, so a
@@ -649,29 +626,28 @@ out structurally identical, and another that fails if a template claims a
 language it does not produce. Both are asserted at import, so a new layout that
 silently duplicates an existing one cannot be merged.
 
-Generation is refused rather than truncated in one case. A document that will not
+Generation refuses rather than truncates, in one case. A document that will not
 fit on one page after four compaction levels raises a layout error naming the
-page count. Content is never dropped quietly.
+page count.
 
 ### PDF content validation
 
-The finished PDF is read back and checked, because a document that compiles is
-not the same as a document that came out right:
+A document that compiles is not the same as a document that came out right, so
+the finished PDF is read back and checked:
 
 - sections survived extraction, not just the compile
 - reading order, columns, overlapping and clipped text
 - invisible text and font size
 - per-field parseability
 
-This is what catches a generator that silently loses the experience section.
+A generator that quietly drops the experience section is caught here.
 
 ### Factual validation
 
-The German Minimal ATS layout extracts the immutable facts from the source CV,
-companies, titles, dates and degrees, then compares them against the generated
-LaTeX. A document that omitted or altered one is rejected with HTTP 422 and the
-affected invariants listed. This is the check that makes the "we never invent
-experience" claim enforceable rather than aspirational.
+The German Minimal ATS layout pulls the immutable facts out of the source CV,
+companies, titles, dates and degrees, and compares them against the generated
+LaTeX. Anything omitted or altered comes back as HTTP 422 with the affected
+invariants listed.
 
 ---
 
@@ -706,7 +682,7 @@ python -m pytest -q
 
 <!-- BEGIN:AUTO:TESTS -->
 
-**Total tests: 1332** across 57 files.
+**Total tests: 1338** across 58 files.
 
 | Test file | Count |
 |-----------|-------|
@@ -726,6 +702,7 @@ python -m pytest -q
 | `tests/test_context_budgeting.py` | 24 |
 | `tests/test_cv_layout_api_errors.py` | 3 |
 | `tests/test_cv_layouts.py` | 0 |
+| `tests/test_dashboard_provider_selector.py` | 6 |
 | `tests/test_dashboard_query_efficiency.py` | 2 |
 | `tests/test_dashboard_workflow.py` | 29 |
 | `tests/test_description_parser.py` | 12 |
@@ -944,6 +921,7 @@ ai-resume-analyzer/
 │   ├── test_context_budgeting.py
 │   ├── test_cv_layout_api_errors.py
 │   ├── test_cv_layouts.py
+│   ├── test_dashboard_provider_selector.py
 │   ├── test_dashboard_query_efficiency.py
 │   ├── test_dashboard_workflow.py
 │   ├── test_description_parser.py
@@ -1016,8 +994,8 @@ Service modules live in the subpackage matching their domain: LLM providers in
 
 ## How the scoring works
 
-Five weighted categories, each reporting its own points won and lost so the total
-is reconstructible:
+Five weighted categories, each reporting its own points won and lost, so you can
+add them up yourself:
 
 | Category | What it measures |
 |---|---|
@@ -1030,16 +1008,15 @@ is reconstructible:
 Before generation there is no document to parse, so that category reports
 `not_measured`, its weight is redistributed across the rest, and the result is
 labelled pre-generation. `POST /validate-ats` scores the finished PDF, and that is
-the number to act on. The two are stored separately because they are different
-measurements.
+the number to act on.
 
 Requirement-level checks sit on top of keyword matching: degree level, named
 certifications, language ability with CEFR levels, and industry terminology like
-GDPR, HIPAA, SOX and PCI DSS. Both English and German wording is accepted, in the
-posting and in the CV.
+GDPR, HIPAA, SOX and PCI DSS. English and German wording are both accepted, in
+the posting and in the CV.
 
-The factual invariant check is described above and is deliberately separate from
-scoring. It gates output; it does not contribute to a number.
+The factual invariant check described above is separate from all of this. It gates
+output; it contributes to no number.
 
 ---
 
@@ -1094,7 +1071,7 @@ loopback gateway is never handed a placeholder token.
 
 - **Rate limiting is off by default.** `API_KEY` is a shared secret rather than a
   per-user identity, so a burst spends the provider's token budget and you get
-  429s a moment later, which is what this project's own test runs did to a free
+  429s a moment later. This project's own test runs did exactly that to a free
   tier. Set `RATE_LIMIT_ENABLED=true` for anything shared. The counters are in
   memory and per process, so with N workers the effective limit is the configured
   value times N. Do not expose the API to the internet regardless.
@@ -1150,9 +1127,9 @@ pipeline. The first two passed the smoke test; the third returns 500 from Ollama
 which on that machine is a hardware limit, an RTX 4060 with 8 GB of VRAM. It will
 behave differently with more memory and nothing here has been measured there.
 
-**No API provider except `groq` has been measured past a smoke test.** That is a
-statement about credentials, not about the providers, but the honest position is
-that remote generation through this application is largely unverified.
+**No API provider except `groq` has been measured past a smoke test.** The
+credentials are the reason. Remote generation through this application is
+largely unverified, and that is worth knowing before you rely on it.
 
 **One-page compaction has a floor.** Level 3 drops body text to 10pt with 0.5 cm
 margins. Past that the document is refused rather than set in a smaller face,
