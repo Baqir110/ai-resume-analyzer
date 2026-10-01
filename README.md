@@ -49,6 +49,8 @@ It runs on your own machine. Ollama needs no account and no key, and
 - [Known limitations](#known-limitations)
 - [Contributing](#contributing)
 
+![Architecture](images/arch.png)
+
 ---
 
 ## Getting started
@@ -968,6 +970,7 @@ ai-resume-analyzer/
 │   ├── check_endpoints.py
 │   ├── check_hf_hub.py
 │   ├── llm_smoke.py
+│   ├── make_architecture_diagram.py
 │   ├── model_matrix.py
 │   ├── run_smoke_tests.py
 │   ├── setup_browser_profile.py
@@ -1189,6 +1192,13 @@ git commit -m "Add feature"
 New service modules go in the subpackage matching their domain. A new LLM
 provider belongs in `services/llm/registry.py`, which is the single list the
 router, the dashboard and `.env.example` all read.
+
+The architecture diagram above is generated rather than drawn by hand, so add a
+subpackage or a provider and re-run it:
+
+```bash
+python scripts/make_architecture_diagram.py
+```
 
 Pre-commit runs on commit. `ruff` and `ruff-format` are deliberately not in the
 hook set: they rewrote files during a commit, which pre-commit treats as a
